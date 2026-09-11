@@ -1,0 +1,25 @@
+name: Apply robust site patch
+
+on:
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply patch
+        run: python3 scripts/apply-site-patch.py
+      - name: Commit patched site
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git rm -f scripts/apply-site-patch.py .github/workflows/apply-demo-grass-fix.yml .github/workflows/apply-demo-grass-fix-v2.yml .github/workflows/apply-site-patch-v3.yml .site-patch-trigger .site-patch-trigger-v2 || true
+          git commit -m "feat: demo first, cuttable 3D grass and safe routing"
+          git push
