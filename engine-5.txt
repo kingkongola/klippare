@@ -1,0 +1,256 @@
+// Honest dead-reckoning experiment.
+// Models 2 and 3 use only their own wheel-derived pose estimate, their sparse
+// learned map, and boundary contacts already experienced. The motor variant
+// additionally gets local blade-current observations. Neither may query the
+// true lawn polygon while choosing a turn.
+
+const DR_TURN_CANDIDATES=[-.55,.55,-.9,.9,-1.25,1.25,-1.62,1.62,-2.05,2.05,-2.55,2.55];
+
+makeLearningMap = function(_poly,start){
+  return Core.createEstimator({
+    x:start[0], y:start[1], heading:0,
+    profile:Core.makeProfile({driftPct:2,seed:1,wheelBase:.48}),
+    useMotor:false
+  });
+};
+
+function configureEstimator(w,{start,heading,profile,useMotor}){
+  w.x=start[0];w.y=start[1];w.heading=heading;
+  w.useMotor=useMotor;
+  // Dead reckoning gets an arbitrary local origin, not the true world
+  // coordinate or an absolute compass heading.
+  w.drOrigin={x:start[0],y:start[1],heading};
+  w.learn=Core.createEstimator({
+    x:0,y:0,heading:0,
+    profile:{...profile},
+    useMotor
+  });
+  updateMower(w);
+}
+
+function grassSignalMode(){
+  return document.getElementById('grassMode')?.value||'patchy';
+}
+
+grassDensity = function(x,y){
+  const mode=grassSignalMode();
+  if(mode==='uniform'||mode==='short')return .96;
+  return Math.max(.65,Math.min(1.25,.91+.13*Math.sin(x*.73+y*.27)+.10*Math.cos(y*.59-x*.31)));
+};
+
+sampleMotorCurrent = function(w){
+  const fresh=w.lawn.sampleUncut(w.x,w.y,cutWidth*.48);
+  const density=grassDensity(w.x,w.y);
+  const mode=grassSignalMode();
+  const heightFactor=mode==='short'?.16:1;
+  // Local physical measurement only: true grass under the blade is allowed.
+  // No information about future cells is exposed.
+  const noise=(Math.random()-.5)*(mode==='short'?.22:.16);
+  return Math.max(1.05,1.25+3.8*fresh*density*heightFactor+noise);
+};
+
+adaptiveObserve = function(w,current){
+  if(!w.learn)return;
+  const norm=Math.max(0,Math.min(1,(current-1.25)/4.0));
+  Core.observePass(w.learn,w.useMotor?norm:0);
+};
+
+updateOdometry = function(w,dx,dy){
+  if(!w.learn)return;
+  // Project actual displacement onto the robot's true forward axis to obtain
+  // the wheel travel that encoders would observe. The estimator never receives
+  // true x/y.
+  const ds=dx*Math.cos(w.heading)+dy*Math.sin(w.heading);
+  Core.integrateTrueWheelMotion(w.learn,ds,ds);
+};
+
+function updateOdometryTurn(w,dtheta){
+  if(!w.learn)return;
+  const b=w.learn.profile.wheelBase;
+  Core.integrateTrueWheelMotion(w.learn,-b*dtheta/2,b*dtheta/2);
+}
+
+function observeLearnedBoundary(w){
+  if(w.learn)Core.observeBoundary(w.learn,w.bodyR*.92);
+}
+
+adaptiveRayScore = function(w,relativeAngle){
+  if(!w.learn)return 0;
+  return Core.scoreRay(w.learn,relativeAngle,{maxDistance:4.2,step:.36,motorWeight:.55});
+};
+
+chooseAdaptiveTurn = function(w){
+  if(!w.learn)return(Math.random()<.5?-1:1)*(1.05+Math.random()*1.8);
+  return Core.chooseTurn(w.learn,DR_TURN_CANDIDATES,{
+    exploration:.14,
+    random:w.learn.rng,
+    scoreOptions:{maxDistance:4.2,step:.36,motorWeight:.55}
+  });
+};
+
+markCut = function(w,dt,active=true){
+  if(active){
+    w.motorCurrent=sampleMotorCurrent(w);
+    if(w.kind==='adaptive')adaptiveObserve(w,w.motorCurrent);
+    w.covered+=w.lawn.mark(w.x,w.y,cutWidth/2);
+    cutGrassField(w.grass,w.x,w.y,cutWidth/2);
+    w.texTick+=dt;
+    if(w.texTick>.15){w.lawn.draw();w.texTick=0}
+  }
+};
+
+stepRandom = function(w,dt){
+  if(w.state==='charge'){
+    w.elapsed+=dt;
+    w.battery=Math.min(1,w.battery+120*dt/3600/w.batteryWh);
+    if(w.battery>=.96){
+      w.chargeCount++;w.state='resume';
+      w.returnRoute=bfsPath(w.dockPos,[w.resume.x,w.resume.y],w.poly,.28,w.bodyR)||[];
+      w.returnIndex=0
+    }
+    return
+  }
+  if(w.state==='return'||w.state==='resume'){
+    const done=followPoints(w,w.returnRoute,'returnIndex',dt,false);
+    w.elapsed+=dt;
+    if(done){
+      if(w.state==='return'){w.state='charge';w.battery=Math.max(w.battery,.01)}
+      else{w.state='drive';w.heading=w.resume.heading}
+    }
+    return
+  }
+  if(w.battery<.14){startReturn(w);return}
+  w.elapsed+=dt;
+
+  if(w.state==='reverse'){
+    const mv=Math.min(.18*dt,w.reverseLeft);
+    const nx=w.x-Math.cos(w.heading)*mv,ny=w.y-Math.sin(w.heading)*mv;
+    if(safeAt(nx,ny,w.poly,w.bodyR)){
+      const dx=nx-w.x,dy=ny-w.y;
+      w.x=nx;w.y=ny;
+      updateOdometry(w,dx,dy);
+      w.distance+=mv;w.reverseLeft-=mv;useEnergy(w,44,dt)
+    }else w.reverseLeft=0;
+    if(w.reverseLeft<=0){
+      if(w.kind==='adaptive')w.turnLeft=chooseAdaptiveTurn(w);
+      w.state='turn'
+    }
+    return
+  }
+
+  if(w.state==='turn'){
+    const da=Math.sign(w.turnLeft)*Math.min(Math.abs(w.turnLeft),w.turnRate*dt);
+    w.heading+=da;w.turnLeft-=da;
+    updateOdometryTurn(w,da);
+    useEnergy(w,36,dt);
+    if(Math.abs(w.turnLeft)<.02)w.state='drive';
+    return
+  }
+
+  // Small real-world heading disturbance. It affects the actual robot but is
+  // not handed directly to dead reckoning.
+  w.heading+=(Math.random()-.5)*.012*dt;
+
+  const mv=w.speed*dt,nx=w.x+Math.cos(w.heading)*mv,ny=w.y+Math.sin(w.heading)*mv;
+  // safeAt is used here only as the physical bumper/boundary event for the
+  // next movement increment. It is NOT used by the turn planner.
+  if(!safeAt(nx,ny,w.poly,w.bodyR)){
+    if(w.kind==='adaptive')observeLearnedBoundary(w);
+    w.state='reverse';
+    w.reverseLeft=.18+.12*Math.random();
+    w.turnLeft=w.kind==='adaptive'?0:(Math.random()<.5?-1:1)*(1.15+Math.random()*1.55);
+    return
+  }
+
+  const dx=nx-w.x,dy=ny-w.y;
+  w.x=nx;w.y=ny;
+  updateOdometry(w,dx,dy);
+  w.distance+=mv;useEnergy(w,52,dt);markCut(w,dt,true)
+};
+
+function addModelMarker(w,color){
+  const mat=new THREE.MeshStandardMaterial({color,emissive:color,emissiveIntensity:.18,roughness:.55});
+  const puck=new THREE.Mesh(new THREE.CylinderGeometry(.13,.13,.09,20),mat);
+  puck.position.set(0,.61,0);
+  w.mower.add(puck);
+}
+
+function estimatorError(w){
+  if(!w.learn||!w.drOrigin)return 0;
+  const dx=w.x-w.drOrigin.x,dy=w.y-w.drOrigin.y,h=w.drOrigin.heading;
+  // Express the true displacement in the estimator's start-relative frame.
+  const tx=Math.cos(h)*dx+Math.sin(h)*dy;
+  const ty=-Math.sin(h)*dx+Math.cos(h)*dy;
+  return Core.positionError(w.learn,tx,ty);
+}
+
+rebuild = function(){
+  clearSim();
+  const poly=SHAPES[shape.value];
+  const b=bounds(poly),lawnWidth=b.maxX-b.minX;
+  const sep=lawnWidth+2.15;
+  const offsets=[-1.5*sep,-.5*sep,.5*sep,1.5*sep];
+
+  const r=createWorld(poly,offsets[0],'random');
+  const mem=createWorld(poly,offsets[1],'adaptive');
+  const motor=createWorld(poly,offsets[2],'adaptive');
+  const smart=createWorld(poly,offsets[3],'smart');
+
+  // Sensor ablation: models 2 and 3 begin with exactly the same true pose and
+  // exactly the same odometry calibration/noise seed. Their only intentional
+  // algorithmic difference is whether blade current may influence the map.
+  const start=randomPoint(poly,MOWER_CLEARANCE);
+  const heading=Math.random()*Math.PI*2;
+  const drift=+(document.getElementById('drift')?.value||2);
+  const seed=(Math.random()*0xffffffff)>>>0;
+  const profile=Core.makeProfile({driftPct:drift,seed,wheelBase:.48});
+  configureEstimator(mem,{start,heading,profile,useMotor:false});
+  configureEstimator(motor,{start,heading,profile,useMotor:true});
+
+  mem.variant='memory';
+  motor.variant='motor';
+  addModelMarker(mem,0xd7b356);
+  addModelMarker(motor,0x59a6d8);
+
+  worlds=[r,mem,motor,smart];
+  fitCameraToLawns(poly,offsets);
+  mc.textContent='';
+  updateStats();
+};
+
+updateStats = function(){
+  const r=worlds[0],m=worlds[1],a=worlds[2],s=worlds[3];
+  if(!r||!m||!a||!s)return;
+  const pct=x=>(100*x).toFixed(1).replace('.',',')+' %';
+  const A=areaPoly(r.poly);
+  const eff=w=>w.distance?Math.min(1,A*coverage(w)/(w.distance*cutWidth)):0;
+  const el=id=>document.getElementById(id);
+  const fmt=x=>x.toFixed(1).replace('.',',');
+
+  for(const [w,prefix] of [[r,'r'],[m,'m'],[a,'a'],[s,'s']]){
+    el(prefix+'Cov').textContent=pct(coverage(w));
+    el(prefix+'Dist').textContent=fmt(w.distance)+' m';
+    el(prefix+'Time').textContent=fmtTime(w.elapsed);
+    const bar=el(prefix+'Bat'),txt=el(prefix+'BatTxt');
+    bar.style.width=(100*w.battery)+'%';
+    txt.textContent=Math.round(100*w.battery)+' %';
+    bar.style.background=w.battery<.2?'var(--danger)':'var(--accent)';
+  }
+
+  el('rExtra').textContent=`unik/svept ${Math.round(100*eff(r))}% · laddningar ${r.chargeCount}`;
+  el('mExtra').textContent=`kartceller ${m.learn?.cells.size||0} · positionsfel ${fmt(estimatorError(m))} m`;
+  el('aMotor').textContent=`${fmt(a.motorCurrent)} A`;
+  el('aExtra').textContent=`kartceller ${a.learn?.cells.size||0} · positionsfel ${fmt(estimatorError(a))} m`;
+  el('sExtra').textContent=s.state==='blocked'
+    ? 'STOPP: säkerhetsgräns träffad'
+    : `unik/svept ${Math.round(100*eff(s))}% · laddningar ${s.chargeCount}`;
+};
+
+const driftEl=document.getElementById('drift');
+const driftValEl=document.getElementById('driftVal');
+const grassModeEl=document.getElementById('grassMode');
+if(driftEl){
+  driftEl.oninput=()=>{driftValEl.textContent=(+driftEl.value).toFixed(1).replace('.',',')+' %'};
+  driftEl.onchange=rebuild;
+}
+if(grassModeEl)grassModeEl.onchange=rebuild;
