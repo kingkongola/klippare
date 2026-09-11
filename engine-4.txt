@@ -1,27 +1,65 @@
-// Three-model presentation layer. Keeps the proven simulation engine intact,
-// but always renders random, motor-current learning and mapped/RTK together.
+// Three-model presentation layer. Always renders random, motor-current learning
+// and mapped/RTK together, then frames the three actual lawn bounds tightly.
 
 floor.geometry.dispose();
 floor.geometry=new THREE.PlaneGeometry(120,50);
-controls.minDistance=20;
+controls.minDistance=8;
 controls.maxDistance=90;
+
+function fitCameraToLawns(poly,offsets){
+  const b=bounds(poly);
+  const target=new THREE.Vector3(0,0,0);
+  const dir=new THREE.Vector3(0,.50,1).normalize();
+  const points=[];
+
+  // Include ground corners and mower-height corners so neither grass nor
+  // robots get clipped. The NDC margins below leave only a small gutter.
+  for(const offset of offsets){
+    for(const x of[b.minX,b.maxX])for(const z of[b.minY,b.maxY]){
+      points.push(new THREE.Vector3(offset+x,0,z));
+      points.push(new THREE.Vector3(offset+x,1.25,z));
+    }
+  }
+
+  const fits=distance=>{
+    camera.position.copy(dir).multiplyScalar(distance);
+    camera.lookAt(target);
+    camera.updateMatrixWorld(true);
+    camera.updateProjectionMatrix();
+    return points.every(p=>{
+      const q=p.clone().project(camera);
+      return q.z>-1&&q.z<1&&Math.abs(q.x)<=.94&&q.y>=-.91&&q.y<=.91;
+    });
+  };
+
+  let lo=5,hi=20;
+  while(!fits(hi)&&hi<200)hi*=1.35;
+  for(let i=0;i<32;i++){
+    const mid=(lo+hi)/2;
+    if(fits(mid))hi=mid;else lo=mid;
+  }
+
+  // Tiny 3% breathing room, rather than the old very large safety margin.
+  camera.position.copy(dir).multiplyScalar(hi*1.03);
+  camera.lookAt(target);
+  camera.updateMatrixWorld(true);
+  controls.target.copy(target);
+  controls.update();
+}
 
 function rebuild(){
   clearSim();
   const poly=SHAPES[shape.value];
-  const b=bounds(poly), lawnWidth=b.maxX-b.minX;
+  const b=bounds(poly),lawnWidth=b.maxX-b.minX;
   const sep=lawnWidth+2.5;
+  const offsets=[-sep,0,sep];
   worlds=[
-    createWorld(poly,-sep,'random'),
-    createWorld(poly,0,'adaptive'),
-    createWorld(poly,sep,'smart')
+    createWorld(poly,offsets[0],'random'),
+    createWorld(poly,offsets[1],'adaptive'),
+    createWorld(poly,offsets[2],'smart')
   ];
 
-  // Frame all three lawns automatically when shape changes.
-  const totalSpan=2*sep+lawnWidth;
-  camera.position.set(0,Math.max(22,totalSpan*.42),Math.max(38,totalSpan*1.02));
-  controls.target.set(0,0,0);
-  controls.update();
+  fitCameraToLawns(poly,offsets);
   mc.textContent='';
   updateStats();
 }
