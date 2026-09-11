@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Interaktiv simulering av slumpkörande och kartläggande robotgräsklippare – med geometri, Monte Carlo, batteri och realistisk körning.">
+  <title>Klippare – hur mycket smartare är en smart robotgräsklippare?</title>
+  <style>
+    :root{
+      --bg:#0c1110; --panel:#131a18; --panel2:#18211e; --text:#eef5f0; --muted:#a9b8b0;
+      --line:#2b3934; --accent:#9ddc8d; --random:#e89b45; --smart:#67c47a; --danger:#ef6b62;
+    }
+    *{box-sizing:border-box}
+    html{scroll-behavior:smooth}
+    body{margin:0;background:var(--bg);color:var(--text);font:16px/1.55 system-ui,-apple-system,Segoe UI,sans-serif}
+    a{color:var(--accent)}
+    .wrap{width:min(1160px,calc(100% - 32px));margin:auto}
+    header{padding:72px 0 52px;background:
+      radial-gradient(circle at 15% 10%,#24493488,transparent 34%),
+      radial-gradient(circle at 90% 0%,#3b322488,transparent 26%),var(--bg)}
+    .eyebrow{color:var(--accent);font-weight:700;letter-spacing:.08em;text-transform:uppercase;font-size:.78rem}
+    h1{font-size:clamp(2.35rem,6vw,5.4rem);line-height:.95;letter-spacing:-.055em;margin:.18em 0 .3em;max-width:970px}
+    h2{font-size:clamp(1.7rem,3.4vw,2.7rem);letter-spacing:-.03em;margin:0 0 .55em}
+    h3{margin:.2em 0 .35em}
+    .lead{font-size:clamp(1.05rem,2vw,1.35rem);color:#d3ded8;max-width:850px}
+    .hero-note{display:inline-block;margin-top:18px;padding:8px 11px;border:1px solid var(--line);border-radius:999px;color:var(--muted);font-size:.9rem}
+    section{padding:58px 0;border-top:1px solid #1c2723}
+    .cols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px}
+    .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:22px}
+    .card p:last-child{margin-bottom:0}
+    .formula{font:600 1.2rem ui-monospace,SFMono-Regular,Menlo,monospace;padding:18px 20px;border-radius:12px;background:#0a0f0d;border:1px solid var(--line);overflow:auto}
+    .muted{color:var(--muted)}
+    .callout{border-left:4px solid var(--accent);padding:12px 16px;background:#122019;border-radius:0 10px 10px 0}
+    .demo-shell{background:#0b0f0e;border:1px solid var(--line);border-radius:18px;overflow:hidden;box-shadow:0 28px 80px #0006}
+    .demo-top{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:14px 16px;background:#111816;border-bottom:1px solid var(--line)}
+    .legend{display:flex;gap:15px;flex-wrap:wrap;font-size:.85rem;color:var(--muted)}
+    .dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:5px}
+    .sim-grid{display:grid;grid-template-columns:minmax(0,1fr) 340px;min-height:650px}
+    #stage{min-height:650px;position:relative;background:linear-gradient(#111817,#0d1211)}
+    #stage canvas{display:block;width:100%;height:100%}
+    #panel{background:var(--panel);border-left:1px solid var(--line);padding:16px;overflow:auto}
+    .control{margin:0 0 14px}
+    .control label{font-size:.78rem;color:var(--muted);display:block;margin-bottom:5px}
+    select,button,input{width:100%;background:#0d1311;color:var(--text);border:1px solid #3a4944;border-radius:9px;padding:9px}
+    button{cursor:pointer;font-weight:650}
+    button:hover{background:#17211e}
+    input[type=range]{padding:0}
+    .button-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    .stats{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0}
+    .stat{padding:10px;border-radius:10px;background:#0e1513;border:1px solid var(--line);font-size:.78rem}
+    .stat.random{border-top:3px solid var(--random)}
+    .stat.smart{border-top:3px solid var(--smart)}
+    .big{font-size:1.22rem;font-variant-numeric:tabular-nums;font-weight:750;margin:2px 0}
+    .mini{color:var(--muted);font-size:.72rem}
+    .meter{height:5px;background:#26312d;border-radius:99px;overflow:hidden;margin:5px 0 8px}
+    .meter>span{display:block;height:100%;width:100%;background:var(--accent)}
+    #mc{font-size:.8rem;color:#d1dbd5;margin-top:10px;line-height:1.4}
+    table{width:100%;border-collapse:collapse}
+    th,td{text-align:left;padding:10px 9px;border-bottom:1px solid var(--line);vertical-align:top}
+    th{color:#dce6e0}
+    footer{padding:38px 0 60px;color:var(--muted);font-size:.9rem}
+    code{background:#131a18;padding:.15em .35em;border-radius:5px}
+    @media(max-width:900px){
+      .cols{grid-template-columns:1fr}
+      .sim-grid{grid-template-columns:1fr}
+      #stage{min-height:520px}
+      #panel{border-left:0;border-top:1px solid var(--line)}
+    }
+  </style>
+  <script type="importmap">
+  {"imports":{
+    "three":"https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js",
+    "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/"
+  }}
+  </script>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="eyebrow">Ett onödigt seriöst experiment om robotgräsklippare</div>
+    <h1>Hur mycket gräs klipper en robot egentligen?</h1>
+    <p class="lead">En klassisk robot åker rakt fram tills något är i vägen, vänder på ett mer eller mindre slumpmässigt sätt och hoppas att sannolikheten löser resten. En modern kamera/RTK-klippare vet var den varit. Frågan är: <strong>hur stor blir skillnaden – och hur mycket beror den på gräsmattans form?</strong></p>
+    <div class="hero-note">Spoiler: en cirkel är snäll mot studsaren. Ett H är betydligt mindre snällt.</div>
+  </div>
+</header>
+
+<main>
+<section>
+  <div class="wrap">
+    <div class="cols">
+      <div>
+        <div class="eyebrow">Utgångspunkten</div>
+        <h2>Två helt olika sätt att lösa samma problem</h2>
+        <p><strong>Slumpklipparen</strong> har ingen karta över vad som redan är klippt. Den vinner genom uthållighet: kör till kanten, backa, sväng, fortsätt. Gamla begränsningsslinga-robotar fungerar förvånansvärt bra just därför att väldigt många slumpmässiga pass till slut ger bra täckning.</p>
+        <p><strong>Den kartläggande klipparen</strong> känner sin position och kan lägga parallella spår, dela upp konstiga ytor i områden och köra färdigt ett område innan den går vidare. Den behöver fortfarande överlapp, vändningar och transportsträckor – fysiken försvinner inte bara för att produkten har en app.</p>
+      </div>
+      <div class="card">
+        <h3>Det enkla idealfallet</h3>
+        <p>Om klippbredden är <em>b</em> och gräsmattans area är <em>A</em>, är den absoluta drömgränsen för körsträckan ungefär:</p>
+        <div class="formula">L<sub>ideal</sub> = A / b</div>
+        <p class="muted">Det betyder inte att någon verklig robot når dit. Varje överlapp, sväng och redan klippt remsa gör körsträckan längre.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="eyebrow">Varför Monte Carlo dök upp</div>
+    <h2>Slumpen går att räkna på – men geometrin förstör den snygga formeln</h2>
+    <div class="cols">
+      <div>
+        <p>Om man låtsas att varje ny bit av körsträckan hamnar helt slumpmässigt över ytan får man en klassisk täckningsmodell:</p>
+        <div class="formula">q ≈ 1 − exp(−bL/A)</div>
+        <p>Då kräver 95&nbsp;% täckning ungefär <strong>3 × den ideala svepsträckan</strong>. Men en robot på en riktig gräsmatta är inte ett välblandat lotteri. Den har riktning, kanter, hörn och passager. Därför är simulering mer intressant än den slutna formeln.</p>
+      </div>
+      <div>
+        <p>Formen spelar också roll. Cirkeln har minst omkrets för given area, vilket ger få kantmöten. Men om gräsmattan består av två stora ytor med en smal passage kan en slumpklippare råka spendera väldigt lång tid i fel del.</p>
+        <div class="callout"><strong>Det viktiga:</strong> area och omkrets räcker inte. Flaskhalsar och sammanhängande delytor innehåller information som ett enda “formtal” missar.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="experiment">
+  <div class="wrap">
+    <div class="eyebrow">Kör själv</div>
+    <h2>Samma gräsmatta. Två strategier.</h2>
+    <p class="muted">Det här är en modell, inte ett produkttest. Båda robotarna har kroppsstorlek, begränsad hastighet och svänghastighet, överlapp, batteriförbrukning och laddstation. Den slumpmässiga roboten kör rakt, upptäcker kanten, backar och gör en slumpmässig undanmanöver. Den smarta delar vid behov upp ytan i zoner och klipper varje zon systematiskt.</p>
+
+    <div class="demo-shell">
+      <div class="demo-top">
+        <strong>Live-simulering</strong>
+        <div class="legend"><span><i class="dot" style="background:var(--random)"></i>slump</span><span><i class="dot" style="background:var(--smart)"></i>kartlagd</span><span>ljusare gräs = klippt</span></div>
+      </div>
+      <div class="sim-grid">
+        <div id="stage"></div>
+        <aside id="panel">
+          <div class="control"><label>Gräsmatta</label>
+            <select id="shape">
+              <option value="square">Kvadrat</option>
+              <option value="circle">Cirkel</option>
+              <option value="long">Långsmal</option>
+              <option value="L">L-form</option>
+              <option value="H" selected>H-form / två områden</option>
+            </select>
+          </div>
+          <div class="control"><label>Simuleringshastighet: <span id="speedVal">12×</span></label><input id="speed" type="range" min="1" max="60" value="12"></div>
+          <div class="control"><label>Klippbredd: <span id="widthVal">0,62 m</span></label><input id="width" type="range" min=".4" max="1.0" step=".02" value=".62"></div>
+          <div class="button-row"><button id="toggle">Paus</button><button id="reset">Starta om</button></div>
+
+          <div class="stats">
+            <div class="stat random">
+              <strong>Slump</strong><div class="big" id="rCov">0,0 %</div>
+              <div id="rDist">0 m</div><div id="rTime">00:00</div>
+              <div class="mini">Batteri <span id="rBatTxt">100 %</span></div><div class="meter"><span id="rBat"></span></div>
+              <div class="mini" id="rExtra">–</div>
+            </div>
+            <div class="stat smart">
+              <strong>Kartlagd</strong><div class="big" id="sCov">0,0 %</div>
+              <div id="sDist">0 m</div><div id="sTime">00:00</div>
+              <div class="mini">Batteri <span id="sBatTxt">100 %</span></div><div class="meter"><span id="sBat"></span></div>
+              <div class="mini" id="sExtra">–</div>
+            </div>
+          </div>
+
+          <button id="mcBtn">Monte Carlo: 150 slumpkörningar till 95 %</button>
+          <div id="mc"></div>
+          <p class="mini">Dra för att rotera kameran. Scrolla för att zooma. Monte Carlo använder samma studslogik i en snabbare 2D-modell.</p>
+        </aside>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="eyebrow">Vad modellen försöker få rätt</div>
+    <h2>Mer än två färgade prickar som glider runt</h2>
+    <div class="cols">
+      <div class="card"><h3>Slumpklipparen</h3><p>Kör huvudsakligen rakt. Vid kantkontakt bromsar den, backar en kort sträcka och roterar ett slumpmässigt antal grader innan den fortsätter. Den har liten riktningsdrift, fysisk kroppsradius och kan inte teleportera ut ur ett hörn.</p></div>
+      <div class="card"><h3>Den smarta klipparen</h3><p>Planerar parallella spår med avsiktlig överlappning. Om formen har en tydlig flaskhals delas ytan i zoner. En zon klipps färdigt innan roboten tar en transportväg till nästa. Vändningar kostar faktisk tid.</p></div>
+      <div class="card"><h3>Batteri och laddning</h3><p>Rörelse och rotation förbrukar energi. Vid låg laddning går roboten hem till dockan via en väg som håller sig inom gräsmattan och laddar innan den fortsätter. Laddtid räknas in i kalendertiden.</p></div>
+      <div class="card"><h3>Vad som fortfarande förenklas</h3><p>Ingen hjulslirning, lutning, blött gräs, satellitskugga, komplex kameraperception, dynamiska hinder eller specifik tillverkares firmware. Resultatet ska tolkas som mekanik/algoritm-experiment, inte som en ranking av verkliga modeller.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="eyebrow">Vad man ska titta efter</div>
+    <h2>Effektivitet är inte bara “hur fort den kör”</h2>
+    <table>
+      <thead><tr><th>Mått</th><th>Varför det spelar roll</th></tr></thead>
+      <tbody>
+        <tr><td>Täckning</td><td>Andel av den faktiska gräsytan som minst en gång passerat under klippdisken.</td></tr>
+        <tr><td>Körsträcka</td><td>Visar hur mycket mekaniskt arbete, hjulslitage och transport som krävts.</td></tr>
+        <tr><td>Unik yta / svept yta</td><td>Ett direkt mått på dubbelklippning. 100 % vore geometriskt perfekt och i praktiken omöjligt.</td></tr>
+        <tr><td>Kalendertid</td><td>Innehåller vändningar, transport och laddning – alltså när jobbet faktiskt blir klart.</td></tr>
+        <tr><td>Monte Carlo-fördelning</td><td>Slumpstrategin har inte ett enda svar. Två körningar kan ge ganska olika resultat på samma form.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+</main>
+
+<footer><div class="wrap">Byggd för att undersöka en enkel fråga som snabbt blev mycket mindre enkel. Källkod och modell är avsiktligt läsbara så att antagandena går att ifrågasätta.</div></footer>
+
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+
+const stage=document.getElementById('stage');
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x111817);
+scene.fog=new THREE.Fog(0x111817,28,52);
+
+const camera=new THREE.PerspectiveCamera(47,1,.1,150);
+camera.position.set(0,18.5,25);
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.outputColorSpace=THREE.SRGBColorSpace;
+stage.appendChild(renderer.domElement);
+
+const controls=new OrbitControls(camera,renderer.domElement);
+controls.target.set(0,0,0);
+controls.enableDamping=true;
+controls.maxPolarAngle=Math.PI/2.03;
+controls.minDistance=13; controls.maxDistance=42;
+
+scene.add(new THREE.HemisphereLight(0xdff4ff,0x31452f,1.45));
+const sun=new THREE.DirectionalLight(0xfff4df,2.4);
+sun.position.set(-8,18,10); sun.castShadow=true;
+sun.shadow.mapSize.set(2048,2048); sun.shadow.camera.left=-24;sun.shadow.camera.right=24;sun.shadow.camera.top=20;sun.shadow.camera.bottom=-20;
+scene.add(sun);
+
+const floor=new THREE.Mesh(new THREE.PlaneGeometry(52,30),new THREE.MeshStandardMaterial({color:0x242b28,roughness:1}));
+floor.rotation.x=-Math.PI/2;floor.position.y=-.06;floor.receiveShadow=true;scene.add(floor);
+
+const SHAPES={
+  square:[[-6,-6],[6,-6],[6,6],[-6,6]],
+  long:[[-9,-3.2],[9,-3.2],[9,3.2],[-9,3.2]],
+  L:[[-6,-6],[1.2,-6],[1.2,-1.2],[6,-1.2],[6,6],[-6,6]],
+  H:[[-8,-5],[-2,-5],[-2,-1.15],[2,-1.15],[2,-5],[8,-5],[8,5],[2,5],[2,1.15],[-2,1.15],[-2,5],[-8,5]],
+  circle:Array.from({length:96},(_,i)=>{const a=i/96*Math.PI*2;return[6.2*Math.cos(a),6.2*Math.sin(a)]})
+};
+
+const areaPoly=p=>{let a=0;for(let i=0,j=p.length-1;i<p.length;j=i++)a+=p[j][0]*p[i][1]-p[i][0]*p[j][1];return Math.abs(a)/2};
+function bounds(p){const xs=p.map(x=>x[0]),ys=p.map(x=>x[1]);return{minX:Math.min(...xs),maxX:Math.max(...xs),minY:Math.min(...ys),maxY:Math.max(...ys)}}
+function pointInPoly(x,y,p){let inside=false;for(let i=0,j=p.length-1;i<p.length;j=i++){const[xi,yi]=p[i],[xj,yj]=p[j];if(((yi>y)!=(yj>y))&&x<(xj-xi)*(y-yi)/(yj-yi)+xi)inside=!inside}return inside}
+function safeAt(x,y,p,r=.43){if(!pointInPoly(x,y,p))return false;for(let i=0;i<12;i++){const a=i/12*Math.PI*2;if(!pointInPoly(x+Math.cos(a)*r,y+Math.sin(a)*r,p))return false}return true}
+function randomPoint(poly,r=.48){const b=bounds(poly);for(let i=0;i<8000;i++){const x=b.minX+Math.random()*(b.maxX-b.minX),y=b.minY+Math.random()*(b.maxY-b.minY);if(safeAt(x,y,poly,r))return[x,y]}return[0,0]}
+function scanIntersections(poly,y){const xs=[];for(let i=0,j=poly.length-1;i<poly.length;j=i++){const[x1,y1]=poly[j],[x2,y2]=poly[i];if((y1<=y&&y2>y)||(y2<=y&&y1>y))xs.push(x1+(y-y1)*(x2-x1)/(y2-y1))}xs.sort((a,b)=>a-b);const out=[];for(let i=0;i+1<xs.length;i+=2)out.push([xs[i],xs[i+1]]);return out}
+function angDiff(a,b){let d=(b-a+Math.PI)%(2*Math.PI)-Math.PI;if(d<-Math.PI)d+=2*Math.PI;return d}
+function fmtTime(sec){const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),s=Math.floor(sec%60);return h?`${h}h ${String(m).padStart(2,'0')}m`:`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`}
+
+function makeLawnTexture(poly,N=210){
+  const b=bounds(poly),w=b.maxX-b.minX,h=b.maxY-b.minY,H=Math.max(60,Math.round(N*h/w)),W=N;
+  const canvas=document.createElement('canvas');canvas.width=W;canvas.height=H;const ctx=canvas.getContext('2d');
+  const inside=new Uint8Array(W*H),cut=new Uint8Array(W*H);let insideCount=0;
+  for(let iy=0;iy<H;iy++)for(let ix=0;ix<W;ix++){const x=b.minX+(ix+.5)/W*w,y=b.minY+(iy+.5)/H*h,k=iy*W+ix;if(pointInPoly(x,y,poly)){inside[k]=1;insideCount++}}
+  const tex=new THREE.CanvasTexture(canvas);tex.colorSpace=THREE.SRGBColorSpace;tex.magFilter=THREE.LinearFilter;
+  function draw(){
+    const im=ctx.createImageData(W,H),d=im.data;
+    for(let k=0;k<W*H;k++){const q=4*k;if(!inside[k]){d[q+3]=0;continue}
+      const noise=((k*1103515245+12345)>>>16)&7;
+      if(cut[k]){d[q]=91+noise;d[q+1]=151+noise;d[q+2]=73+noise}
+      else{d[q]=37+noise;d[q+1]=103+noise;d[q+2]=47+noise}
+      d[q+3]=255}
+    ctx.putImageData(im,0,0);tex.needsUpdate=true
+  }
+  function mark(x,y,r){const cx=(x-b.minX)/w*W,cy=(y-b.minY)/h*H,rx=r/w*W,ry=r/h*H;let add=0;
+    for(let iy=Math.max(0,Math.floor(cy-ry));iy<=Math.min(H-1,Math.ceil(cy+ry));iy++)
+      for(let ix=Math.max(0,Math.floor(cx-rx));ix<=Math.min(W-1,Math.ceil(cx+rx));ix++){const dx=(ix+.5-cx)/rx,dy=(iy+.5-cy)/ry,k=iy*W+ix;if(dx*dx+dy*dy<=1&&inside[k]&&!cut[k]){cut[k]=1;add++}}
+    return add}
+  draw(); return{b,w,h,W,H,inside,cut,insideCount,tex,mark,draw}
+}
+
+function mat(c,r=.55,m=.08){return new THREE.MeshStandardMaterial({color:c,roughness:r,metalness:m})}
+function mowerMesh(kind){
+  const g=new THREE.Group(), cast=o=>(o.castShadow=o.receiveShadow=true,o);
+  const rubber=mat(0x070808,.98),black=mat(0x15191b,.8),metal=mat(0xaab1b5,.3,.72),glass=mat(0x10242d,.18,.3);
+  function box(x,y,z,ma,px,py,pz){const q=cast(new THREE.Mesh(new THREE.BoxGeometry(x,y,z),ma));q.position.set(px,py,pz);g.add(q);return q}
+  function cyl(r,h,ma,px,py,pz,rx=0,ry=0,rz=0){const q=cast(new THREE.Mesh(new THREE.CylinderGeometry(r,r,h,24),ma));q.position.set(px,py,pz);q.rotation.set(rx,ry,rz);g.add(q);return q}
+  if(kind==='random'){
+    const body=mat(0xe59a43,.36,.08),accent=mat(0x353b3e,.6);
+    box(1.2,.17,.8,black,0,.18,0);
+    const shell=cast(new THREE.Mesh(new THREE.SphereGeometry(.62,32,20),body));shell.scale.set(1,.48,.68);shell.position.set(-.02,.43,0);g.add(shell);
+    box(.13,.2,.84,black,.58,.26,0);
+    for(const z of[-.44,.44]){cyl(.19,.13,rubber,-.2,.2,z,Math.PI/2);cyl(.095,.137,metal,-.2,.2,z,Math.PI/2)}
+    cyl(.10,.08,rubber,.4,.12,0,0,0,Math.PI/2);
+    cyl(.32,.035,metal,.02,.085,0);box(.52,.025,.05,metal,.02,.065,0);
+    cyl(.07,.035,accent,.05,.72,0); cyl(.045,.045,mat(0xd73b34,.35),.05,.75,0);
+    box(.24,.035,.13,glass,-.18,.695,0);
+    box(.035,.035,.23,metal,.655,.34,-.31);box(.035,.035,.23,metal,.655,.34,.31);
+  }else{
+    const green=mat(0x5bbb70,.3,.14),dark=mat(0x20272a,.55,.12),lime=mat(0xa7db62,.3);
+    box(1.18,.18,.82,dark,0,.19,0);
+    const shell=cast(new THREE.Mesh(new THREE.CapsuleGeometry(.38,.46,6,18),green));shell.rotation.z=Math.PI/2;shell.scale.set(1.12,.72,1.0);shell.position.set(-.03,.43,0);g.add(shell);
+    box(.32,.16,.68,dark,.38,.49,0);
+    for(const z of[-.47,.47]){
+      cyl(.235,.15,rubber,-.28,.24,z,Math.PI/2);
+      cyl(.11,.156,metal,-.28,.24,z,Math.PI/2);
+      for(let i=0;i<8;i++){const a=i/8*Math.PI*2;const t=box(.055,.035,.17,black,-.28+.23*Math.cos(a),.24+.23*Math.sin(a),z);t.rotation.z=a}
+    }
+    for(const z of[-.30,.30])cyl(.095,.06,rubber,.43,.11,z,Math.PI/2);
+    cyl(.33,.035,metal,.04,.083,0);box(.56,.022,.052,metal,.04,.062,0);
+    box(.12,.14,.44,dark,.48,.67,0);
+    for(const z of[-.12,.12]){cyl(.05,.045,glass,.548,.68,z,0,0,Math.PI/2);cyl(.017,.048,mat(0x79b9d2,.15,.35),.575,.68,z,0,0,Math.PI/2)}
+    cyl(.025,.30,metal,-.13,.78,0); cyl(.115,.065,glass,-.13,.95,0); cyl(.075,.018,lime,-.13,.997,0);
+    for(const z of[-.27,.27])box(.035,.07,.11,mat(0xf4e9bc,.2),.575,.43,z);
+    box(.04,.07,.38,mat(0xc93832,.35),-.58,.43,0);
+  }
+  const arrow=cast(new THREE.Mesh(new THREE.ConeGeometry(.065,.22,16),mat(0xf1f1ed,.45)));arrow.rotation.z=-Math.PI/2;arrow.position.set(.25,.79,0);g.add(arrow);
+  g.scale.setScalar(1.05);return g
+}
+function makeDock(){const g=new THREE.Group();const dark=mat(0x282d2e,.7),metal=mat(0x999f9f,.35,.55);
+  const base=new THREE.Mesh(new THREE.BoxGeometry(1.25,.07,.85),dark);base.position.y=.035;base.castShadow=true;g.add(base);
+  const post=new THREE.Mesh(new THREE.BoxGeometry(.12,.7,.65),dark);post.position.set(-.5,.38,0);post.castShadow=true;g.add(post);
+  const roof=new THREE.Mesh(new THREE.BoxGeometry(.78,.07,.86),dark);roof.position.set(-.14,.72,0);roof.castShadow=true;g.add(roof);
+  for(const z of[-.18,.18]){const c=new THREE.Mesh(new THREE.BoxGeometry(.03,.12,.08),metal);c.position.set(.48,.12,z);g.add(c)}
+  return g
+}
+function dockPoint(poly){
+  const b=bounds(poly);
+  const tries=[[b.minX+.9,0],[b.minX+.9,b.minY+.9],[0,b.minY+.9],[b.maxX-.9,0]];
+  for(const p of tries)if(safeAt(p[0],p[1],poly,.55))return p;
+  return randomPoint(poly,.55)
+}
+
+function straightInside(a,b,poly,r=.42){const n=Math.ceil(Math.hypot(b[0]-a[0],b[1]-a[1])/.25);for(let i=0;i<=n;i++){const t=i/n;if(!safeAt(a[0]*(1-t)+b[0]*t,a[1]*(1-t)+b[1]*t,poly,r))return false}return true}
+function bfsPath(start,goal,poly,step=.45){
+  if(straightInside(start,goal,poly,.40))return[goal];
+  const b=bounds(poly),nx=Math.ceil((b.maxX-b.minX)/step)+1,ny=Math.ceil((b.maxY-b.minY)/step)+1,id=(x,y)=>y*nx+x,coord=i=>[i%nx,Math.floor(i/nx)];
+  const cell=p=>[Math.max(0,Math.min(nx-1,Math.round((p[0]-b.minX)/step))),Math.max(0,Math.min(ny-1,Math.round((p[1]-b.minY)/step)))];
+  const s=cell(start),t=cell(goal),q=[id(...s)],prev=new Int32Array(nx*ny);prev.fill(-2);prev[q[0]]=-1;let qi=0,end=-1;
+  const dirs=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+  while(qi<q.length){const cur=q[qi++];if(cur===id(...t)){end=cur;break}const[cx,cy]=coord(cur);
+    for(const[dx,dy]of dirs){const x=cx+dx,y=cy+dy;if(x<0||y<0||x>=nx||y>=ny)continue;const k=id(x,y);if(prev[k]!==-2)continue;const wx=b.minX+x*step,wy=b.minY+y*step;if(!safeAt(wx,wy,poly,.38))continue;prev[k]=cur;q.push(k)}}
+  if(end<0)return[goal];const rev=[];for(let k=end;k>=0;k=prev[k]){const[x,y]=coord(k);rev.push([b.minX+x*step,b.minY+y*step]);if(prev[k]===-1)break}rev.reverse();rev.push(goal);return rev.filter((_,i)=>i===rev.length-1||i%2===0)
+}
+
+function smartRoute(poly,width){
+  const b=bounds(poly),spacing=width*.90,rows=[];
+  for(let y=b.minY+.55;y<=b.maxY-.55;y+=spacing){const segs=scanIntersections(poly,y).map(([a,c])=>[a+.48,c-.48]).filter(s=>s[1]>s[0]);if(segs.length)rows.push({y,segs})}
+  if(!rows.length)return[];
+  const gaps=[];
+  for(const r of rows)if(r.segs.length>1)for(let i=0;i<r.segs.length-1;i++)if(r.segs[i+1][0]-r.segs[i][1]>width*1.2)gaps.push((r.segs[i][1]+r.segs[i+1][0])/2);
+  gaps.sort((a,b)=>a-b);const cl=[];
+  for(const x of gaps){let c=cl[cl.length-1];if(!c||Math.abs(x-c.mean)>Math.max(width*1.4,(b.maxX-b.minX)*.07))cl.push(c={xs:[x],mean:x});else{c.xs.push(x);c.mean=c.xs.reduce((a,v)=>a+v,0)/c.xs.length}}
+  const sep=cl.filter(c=>c.xs.length>=Math.max(2,Math.floor(rows.length*.15))).map(c=>c.mean).sort((a,b)=>a-b);
+  const cuts=[-Infinity,...sep,Infinity],zones=Array.from({length:cuts.length-1},()=>[]);
+  for(const r of rows)for(const[a,c]of r.segs)for(let z=0;z<zones.length;z++){const lo=Math.max(a,cuts[z]),hi=Math.min(c,cuts[z+1]);if(hi-lo>.18)zones[z].push({y:r.y,a:lo,c:hi})}
+  const alive=zones.filter(z=>z.length);
+  function zonePath(zone,start){
+    zone=[...zone].sort((a,b)=>a.y-b.y);const vars=[];
+    for(const rev of[false,true])for(const init of[false,true]){const ord=rev?[...zone].reverse():zone,passes=[];let flip=init;
+      for(const r of ord){passes.push(flip?[[r.c,r.y],[r.a,r.y]]:[[r.a,r.y],[r.c,r.y]]);flip=!flip}
+      const cost=start?Math.hypot(passes[0][0][0]-start[0],passes[0][0][1]-start[1]):passes[0][0][0];vars.push({passes,cost})}
+    vars.sort((a,b)=>a.cost-b.cost);const p=vars[0].passes,out=[{p:p[0][0],mow:true},{p:p[0][1],mow:true}];
+    for(let i=1;i<p.length;i++){for(const q of bfsPath(out[out.length-1].p,p[i][0],poly))out.push({p:q,mow:false});out.push({p:p[i][1],mow:true})}return out
+  }
+  const remain=[...alive],out=[];let current=null;
+  while(remain.length){let bi=0,bp=null,bc=Infinity;for(let i=0;i<remain.length;i++){const p=zonePath(remain[i],current),c=current?Math.hypot(p[0].p[0]-current[0],p[0].p[1]-current[1]):p[0].p[0];if(c<bc){bc=c;bi=i;bp=p}}
+    if(out.length){for(const q of bfsPath(out[out.length-1].p,bp[0].p,poly))out.push({p:q,mow:false});out.push(...bp.slice(1))}else out.push(...bp);current=out[out.length-1].p;remain.splice(bi,1)}
+  return out
+}
+
+let cutWidth=.62,simSpeed=12,running=true,worlds=[],simObjects=[];
+function addSim(o){o.userData.sim=true;scene.add(o);simObjects.push(o);return o}
+function clearSim(){for(const o of simObjects)scene.remove(o);simObjects=[]}
+
+function createWorld(poly,offset,kind){
+  const lawn=makeLawnTexture(poly),b=lawn.b;
+  const plane=new THREE.Mesh(new THREE.PlaneGeometry(lawn.w,lawn.h),new THREE.MeshStandardMaterial({map:lawn.tex,transparent:true,alphaTest:.05,roughness:1}));
+  plane.rotation.x=-Math.PI/2;plane.position.set(offset+(b.minX+b.maxX)/2,.005,(b.minY+b.maxY)/2);plane.receiveShadow=true;addSim(plane);
+  const pts=poly.map(([x,y])=>new THREE.Vector3(offset+x,.03,y));pts.push(pts[0].clone());
+  const border=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:0x91a196,transparent:true,opacity:.55}));addSim(border);
+
+  const dp=dockPoint(poly),dock=makeDock();dock.position.set(offset+dp[0],0,dp[1]);dock.rotation.y=Math.PI;addSim(dock);
+  const mower=mowerMesh(kind);addSim(mower);
+  const start=kind==='smart'?dp:randomPoint(poly,.5);
+  const route=kind==='smart'?smartRoute(poly,cutWidth):[];
+  const w={poly,offset,kind,lawn,mower,dockPos:dp,x:start[0],y:start[1],heading:0,speed:kind==='smart'?.48:.43,turnRate:kind==='smart'?1.55:1.35,
+    bodyR:.46,distance:0,elapsed:0,energy:0,batteryWh:kind==='smart'?82:70,battery:1,chargeCount:0,state:'work',reverseLeft:0,turnLeft:0,
+    route,routeIndex:0,routeMow:true,returnRoute:[],returnIndex:0,resume:null,covered:0,texTick:0,done:false};
+  if(kind==='smart'&&route.length){w.x=route[0].p[0];w.y=route[0].p[1];w.routeIndex=1}
+  updateMower(w);return w
+}
+function updateMower(w){w.mower.position.set(w.offset+w.x,.02,w.y);w.mower.rotation.y=-w.heading}
+function useEnergy(w,power,dt){w.energy+=power*dt/3600;w.battery=Math.max(0,w.battery-power*dt/3600/w.batteryWh)}
+function markCut(w,dt,active=true){if(active){w.covered+=w.lawn.mark(w.x,w.y,cutWidth/2);w.texTick+=dt;if(w.texTick>.15){w.lawn.draw();w.texTick=0}}}
+function startReturn(w){
+  w.resume={x:w.x,y:w.y,heading:w.heading,state:w.state,routeIndex:w.routeIndex};
+  w.returnRoute=bfsPath([w.x,w.y],w.dockPos,w.poly,.45);w.returnIndex=0;w.state='return'
+}
+function followPoints(w,points,indexKey,dt,mow=false){
+  if(w[indexKey]>=points.length)return true;
+  const target=points[w[indexKey]],p=target.p||target,dx=p[0]-w.x,dy=p[1]-w.y,d=Math.hypot(dx,dy),desired=Math.atan2(dy,dx),da=angDiff(w.heading,desired);
+  if(Math.abs(da)>.10){const step=Math.sign(da)*Math.min(Math.abs(da),w.turnRate*dt);w.heading+=step;useEnergy(w,w.kind==='smart'?42:34,dt);return false}
+  const move=Math.min(d,w.speed*dt);if(d>1e-5){w.x+=dx/d*move;w.y+=dy/d*move;w.distance+=move;useEnergy(w,w.kind==='smart'?64:52,dt);markCut(w,dt,mow&&(target.mow??true))}
+  if(d<.055||move>=d-.001)w[indexKey]++;return w[indexKey]>=points.length
+}
+function stepRandom(w,dt){
+  if(w.state==='charge'){w.elapsed+=dt;w.battery=Math.min(1,w.battery+120*dt/3600/w.batteryWh);if(w.battery>=.96){w.chargeCount++;w.state='resume';w.returnRoute=bfsPath(w.dockPos,[w.resume.x,w.resume.y],w.poly,.45);w.returnIndex=0}return}
+  if(w.state==='return'||w.state==='resume'){const done=followPoints(w,w.returnRoute,'returnIndex',dt,false);w.elapsed+=dt;if(done){if(w.state==='return'){w.state='charge';w.battery=Math.max(w.battery,.01)}else{w.state='drive';w.heading=w.resume.heading}}return}
+  if(w.battery<.14){startReturn(w);return}
+  w.elapsed+=dt;
+  if(w.state==='reverse'){const mv=Math.min(.18*dt,w.reverseLeft);const nx=w.x-Math.cos(w.heading)*mv,ny=w.y-Math.sin(w.heading)*mv;if(safeAt(nx,ny,w.poly,w.bodyR)){w.x=nx;w.y=ny;w.distance+=mv;w.reverseLeft-=mv;useEnergy(w,44,dt)}else w.reverseLeft=0;if(w.reverseLeft<=0)w.state='turn';return}
+  if(w.state==='turn'){const da=Math.sign(w.turnLeft)*Math.min(Math.abs(w.turnLeft),w.turnRate*dt);w.heading+=da;w.turnLeft-=da;useEnergy(w,36,dt);if(Math.abs(w.turnLeft)<.02)w.state='drive';return}
+  w.heading+=(Math.random()-.5)*.012*dt;
+  const mv=w.speed*dt,nx=w.x+Math.cos(w.heading)*mv,ny=w.y+Math.sin(w.heading)*mv;
+  if(!safeAt(nx,ny,w.poly,w.bodyR)){w.state='reverse';w.reverseLeft=.18+.12*Math.random();w.turnLeft=(Math.random()<.5?-1:1)*(1.15+Math.random()*1.55);return}
+  w.x=nx;w.y=ny;w.distance+=mv;useEnergy(w,52,dt);markCut(w,dt,true)
+}
+function stepSmart(w,dt){
+  if(w.done)return;
+  if(w.state==='charge'){w.elapsed+=dt;w.battery=Math.min(1,w.battery+135*dt/3600/w.batteryWh);if(w.battery>=.96){w.chargeCount++;w.state='resume';w.returnRoute=bfsPath(w.dockPos,[w.resume.x,w.resume.y],w.poly,.45);w.returnIndex=0}return}
+  if(w.state==='return'||w.state==='resume'){const done=followPoints(w,w.returnRoute,'returnIndex',dt,false);w.elapsed+=dt;if(done){if(w.state==='return')w.state='charge';else{w.state='work';w.routeIndex=w.resume.routeIndex}}return}
+  if(w.battery<.14){startReturn(w);return}
+  w.elapsed+=dt;
+  if(w.routeIndex>=w.route.length){w.done=true;return}
+  const target=w.route[w.routeIndex],dx=target.p[0]-w.x,dy=target.p[1]-w.y,d=Math.hypot(dx,dy),desired=Math.atan2(dy,dx),da=angDiff(w.heading,desired);
+  if(Math.abs(da)>.08){const step=Math.sign(da)*Math.min(Math.abs(da),w.turnRate*dt);w.heading+=step;useEnergy(w,43,dt);return}
+  const mv=Math.min(d,w.speed*dt);if(d>1e-5){w.x+=dx/d*mv;w.y+=dy/d*mv;w.distance+=mv;useEnergy(w,64,dt);markCut(w,dt,target.mow)}
+  if(d<.05||mv>=d-.001)w.routeIndex++
+}
+function coverage(w){return w.covered/w.lawn.insideCount}
+function rebuild(){
+  clearSim();const poly=SHAPES[shape.value];worlds=[createWorld(poly,-9,'random'),createWorld(poly,9,'smart')];mc.textContent='';updateStats()
+}
+function updateStats(){
+  const r=worlds[0],s=worlds[1];if(!r||!s)return;
+  const pct=x=>(100*x).toFixed(1).replace('.',',')+' %';
+  rCov.textContent=pct(coverage(r));sCov.textContent=pct(coverage(s));
+  rDist.textContent=r.distance.toFixed(1).replace('.',',')+' m';sDist.textContent=s.distance.toFixed(1).replace('.',',')+' m';
+  rTime.textContent=fmtTime(r.elapsed);sTime.textContent=fmtTime(s.elapsed);
+  for(const [w,bar,txt]of[[r,rBat,rBatTxt],[s,sBat,sBatTxt]]){bar.style.width=(100*w.battery)+'%';txt.textContent=Math.round(100*w.battery)+' %';bar.style.background=w.battery<.2?'var(--danger)':'var(--accent)'}
+  const A=areaPoly(r.poly);
+  const eff=w=>w.distance?Math.min(1,A*coverage(w)/(w.distance*cutWidth)):0;
+  rExtra.textContent=`unik/svept ${Math.round(100*eff(r))}% · laddningar ${r.chargeCount}`;
+  sExtra.textContent=`unik/svept ${Math.round(100*eff(s))}% · laddningar ${s.chargeCount}`;
+}
+function resize(){const w=stage.clientWidth,h=stage.clientHeight;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix()}
+new ResizeObserver(resize).observe(stage);resize();
+
+let last=performance.now(),uiAcc=0;
+function animate(now){requestAnimationFrame(animate);const real=Math.min(.05,(now-last)/1000);last=now;if(running&&worlds.length){const total=real*simSpeed,n=Math.max(1,Math.ceil(total/.045)),dt=total/n;for(let i=0;i<n;i++)for(const w of worlds){w.kind==='random'?stepRandom(w,dt):stepSmart(w,dt);updateMower(w)}uiAcc+=real;if(uiAcc>.12){updateStats();uiAcc=0}}controls.update();renderer.render(scene,camera)}
+requestAnimationFrame(animate);
+
+async function monteCarlo(trials=150){
+  mc.textContent='Kör Monte Carlo…';await new Promise(r=>setTimeout(r,20));
+  const poly=SHAPES[shape.value],b=bounds(poly),N=76,H=Math.max(30,Math.round(N*(b.maxY-b.minY)/(b.maxX-b.minX))),W=N,dx=(b.maxX-b.minX)/W,dy=(b.maxY-b.minY)/H,cells=[],cellAt=new Int32Array(W*H);cellAt.fill(-1);
+  for(let iy=0;iy<H;iy++)for(let ix=0;ix<W;ix++){const x=b.minX+(ix+.5)*dx,y=b.minY+(iy+.5)*dy;if(pointInPoly(x,y,poly)){cellAt[iy*W+ix]=cells.length;cells.push([x,y])}}
+  const need=Math.ceil(.95*cells.length),res=[],ds=.18,maxDist=areaPoly(poly)/cutWidth*12,r=cutWidth/2,r2=r*r;
+  for(let t=0;t<trials;t++){
+    let [x,y]=randomPoint(poly,.46),heading=Math.random()*Math.PI*2,dist=0,count=0,state='drive',back=0,turn=0;
+    const cut=new Uint8Array(cells.length);
+    while(count<need&&dist<maxDist){
+      if(state==='reverse'){const mv=Math.min(ds*.45,back),nx=x-Math.cos(heading)*mv,ny=y-Math.sin(heading)*mv;if(safeAt(nx,ny,poly,.46)){x=nx;y=ny;dist+=mv}back-=mv;if(back<=0)state='turn'}
+      else if(state==='turn'){const da=Math.sign(turn)*Math.min(Math.abs(turn),.33);heading+=da;turn-=da;if(Math.abs(turn)<.02)state='drive'}
+      else{const nx=x+Math.cos(heading)*ds,ny=y+Math.sin(heading)*ds;if(!safeAt(nx,ny,poly,.46)){state='reverse';back=.18+.12*Math.random();turn=(Math.random()<.5?-1:1)*(1.15+Math.random()*1.55)}else{x=nx;y=ny;dist+=ds}}
+      const cx=Math.floor((x-b.minX)/dx),cy=Math.floor((y-b.minY)/dy),rx=Math.ceil(r/dx),ry=Math.ceil(r/dy);
+      for(let gy=Math.max(0,cy-ry);gy<=Math.min(H-1,cy+ry);gy++)for(let gx=Math.max(0,cx-rx);gx<=Math.min(W-1,cx+rx);gx++){const ci=cellAt[gy*W+gx];if(ci<0||cut[ci])continue;const ddx=cells[ci][0]-x,ddy=cells[ci][1]-y;if(ddx*ddx+ddy*ddy<=r2){cut[ci]=1;count++}}
+    }
+    res.push(dist);if(t%15===0){mc.textContent=`Kör Monte Carlo… ${t}/${trials}`;await new Promise(r=>setTimeout(r,0))}
+  }
+  res.sort((a,b)=>a-b);const mean=res.reduce((a,b)=>a+b,0)/res.length,q=p=>res[Math.floor((res.length-1)*p)];
+  const route=smartRoute(poly,cutWidth);let smart=0;let prev=route[0]?.p;for(let i=1;i<route.length;i++){smart+=Math.hypot(route[i].p[0]-prev[0],route[i].p[1]-prev[1]);prev=route[i].p}
+  mc.innerHTML=`<strong>95 % täckning</strong><br>Slump: medel ${mean.toFixed(0)} m, median ${q(.5).toFixed(0)} m, 10–90 % ${q(.1).toFixed(0)}–${q(.9).toFixed(0)} m.<br>Smart planerad helrutt: ca ${smart.toFixed(0)} m. Sträckförhållande ≈ <strong>${(mean/smart).toFixed(1)}×</strong>.`;
+}
+
+const shape=document.getElementById('shape'),speed=document.getElementById('speed'),width=document.getElementById('width');
+const speedVal=document.getElementById('speedVal'),widthVal=document.getElementById('widthVal');
+const toggle=document.getElementById('toggle'),reset=document.getElementById('reset'),mcBtn=document.getElementById('mcBtn'),mc=document.getElementById('mc');
+const rCov=document.getElementById('rCov'),sCov=document.getElementById('sCov'),rDist=document.getElementById('rDist'),sDist=document.getElementById('sDist'),rTime=document.getElementById('rTime'),sTime=document.getElementById('sTime'),rBat=document.getElementById('rBat'),sBat=document.getElementById('sBat'),rBatTxt=document.getElementById('rBatTxt'),sBatTxt=document.getElementById('sBatTxt'),rExtra=document.getElementById('rExtra'),sExtra=document.getElementById('sExtra');
+
+shape.onchange=rebuild;
+speed.oninput=()=>{simSpeed=+speed.value;speedVal.textContent=simSpeed+'×'};
+width.oninput=()=>{cutWidth=+width.value;widthVal.textContent=cutWidth.toFixed(2).replace('.',',')+' m';rebuild()};
+toggle.onclick=()=>{running=!running;toggle.textContent=running?'Paus':'Fortsätt'};
+reset.onclick=rebuild;
+mcBtn.onclick=()=>monteCarlo(150);
+
+rebuild();
+</script>
+</body>
+</html>
