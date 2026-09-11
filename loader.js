@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
-import * as Core from './model-core.mjs?v=29';
+import * as Core from './model-core.mjs?v=30';
 
-const files=['engine-1.txt','engine-2.txt','engine-3.txt','engine-4.txt','engine-5.txt'];
+const files=['engine-1.txt','engine-2.txt','engine-3.txt','engine-4.txt','engine-5.txt','engine-6.txt'];
 const sources=await Promise.all(files.map(async p=>{
-  const r=await fetch(`${p}?v=29`,{cache:'no-store'});
+  const r=await fetch(`${p}?v=30`,{cache:'no-store'});
   if(!r.ok)throw new Error(`Kunde inte ladda ${p}`);
   return r.text();
 }));
@@ -22,13 +22,11 @@ const end=sources[2].indexOf('function resize()',start);
 if(start<0||end<0)throw new Error('Kunde inte patcha presentationslagret');
 sources[2]=sources[2].slice(0,start)+sources[2].slice(end);
 
-// Do not start the simulation until engine-5 has installed the honest
-// four-model sensor-ablation layer.
+// Do not start until the honest four-model layer and v30 MCU/gyro overlay are loaded.
 sources[2]=sources[2].replace(/\nrebuild\(\);\s*$/,'\n');
 
 eval(sources.join('\n')+'\nrebuild();\n');
 
-// Make the Monte Carlo experiment self-explanatory in the UI.
 {
   const button=document.getElementById('mcBtn');
   const output=document.getElementById('mc');
@@ -40,7 +38,7 @@ eval(sources.join('\n')+'\nrebuild();\n');
       title.textContent='Testa 100 nya körningar';
       const help=document.createElement('p');
       help.className='mc-help';
-      help.innerHTML='Vad händer? Vi nollställer gräsmattan 100 gånger. I varje omgång kör alla fyra strategier på samma form. Slump, DR + minne och DR + minne + klippmotor får samma startpunkt. Modell 2 och 3 får dessutom exakt samma dead-reckoning-fel. Vi stoppar när <strong>95 %</strong> är klippt och jämför körsträckan. <strong>Kortare är bättre.</strong>';
+      help.innerHTML='Vad händer? Vi nollställer gräsmattan 100 gånger. Alla strategier får samma form och start. DR-robotarna använder hjul + gyro, möter simulerad slirning och planerar aktivt mot glest besökta delar av sin egen karta. Vi stoppar vid <strong>95 %</strong> täckning och jämför körsträckan. <strong>Kortare är bättre.</strong>';
       box.insertBefore(help,button);
       box.insertBefore(title,help);
     }
