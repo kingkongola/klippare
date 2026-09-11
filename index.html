@@ -3,24 +3,138 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="Tre robotgräsklipparstrategier på samma gräsmatta: slump, klippmotor-lärande och kartlagd RTK.">
-<title>Klippare – tre strategier på samma gräsmatta</title>
+<meta name="description" content="Fyra robotgräsklipparstrategier på samma gräsmatta: slump, dead reckoning med minne, samma med klippmotorström och kartlagd RTK.">
+<title>Klippare – fyra strategier på samma gräsmatta</title>
 <style>
-:root{--bg:#0c1110;--panel:#131a18;--text:#eef5f0;--muted:#a9b8b0;--line:#2b3934;--accent:#9ddc8d;--random:#e89b45;--adaptive:#59a6d8;--smart:#67c47a;--danger:#ef6b62}*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}.wrap{width:min(1280px,calc(100% - 28px));margin:auto}header{padding:48px 0 28px;background:radial-gradient(circle at 15% 10%,#24493488,transparent 34%),radial-gradient(circle at 90% 0%,#3b322488,transparent 26%),var(--bg)}.eyebrow{color:var(--accent);font-weight:750;letter-spacing:.08em;text-transform:uppercase;font-size:.76rem}h1{font-size:clamp(2.3rem,5.6vw,5rem);line-height:.96;letter-spacing:-.05em;margin:.15em 0 .25em;max-width:1050px}h2{font-size:clamp(1.55rem,3vw,2.45rem);letter-spacing:-.025em;margin:.1em 0 .45em}.lead{font-size:clamp(1rem,2vw,1.25rem);color:#d3ded8;max-width:900px}.hero-note{display:inline-block;margin-top:12px;padding:7px 10px;border:1px solid var(--line);border-radius:999px;color:var(--muted);font-size:.88rem}section{padding:38px 0;border-top:1px solid #1c2723}.demo{background:#0b0f0e;border:1px solid var(--line);border-radius:16px;overflow:hidden;box-shadow:0 24px 70px #0006}.demo-head{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:12px 15px;background:#111816;border-bottom:1px solid var(--line)}.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:.82rem;color:var(--muted)}.dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:5px}.controls{display:grid;grid-template-columns:1.15fr 1fr 1fr auto;gap:9px;padding:12px 14px;background:#101614;border-bottom:1px solid var(--line);align-items:end}.control label{font-size:.75rem;color:var(--muted);display:block;margin-bottom:4px}select,button,input{width:100%;background:#0d1311;color:var(--text);border:1px solid #3a4944;border-radius:8px;padding:8px}button{cursor:pointer;font-weight:650}.buttons{display:flex;gap:7px}.buttons button{min-width:92px}input[type=range]{padding:0}#stage{height:650px;background:linear-gradient(#111817,#0d1211)}#stage canvas{display:block;width:100%;height:100%}.models{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:var(--line);border-top:1px solid var(--line)}.model{background:var(--panel);padding:14px 15px}.model.random{border-top:4px solid var(--random)}.model.adaptive{border-top:4px solid var(--adaptive)}.model.smart{border-top:4px solid var(--smart)}.model h3{margin:0 0 5px;font-size:1rem}.model p{margin:0 0 9px;color:#bcc9c2;font-size:.82rem;min-height:58px}.big{font-size:1.45rem;font-weight:780;font-variant-numeric:tabular-nums}.metrics{display:flex;gap:12px;flex-wrap:wrap;color:var(--muted);font-size:.78rem}.mini{color:var(--muted);font-size:.72rem;margin-top:5px}.meter{height:5px;background:#26312d;border-radius:99px;overflow:hidden;margin-top:5px}.meter>span{display:block;height:100%;width:100%;background:var(--accent)}.mc{padding:12px 14px;border-top:1px solid var(--line)}#mc{font-size:.8rem;color:#d1dbd5;margin-top:8px;line-height:1.4}.explain{display:grid;grid-template-columns:1fr 1fr;gap:20px}.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px}.formula{font:600 1.08rem ui-monospace,SFMono-Regular,Menlo,monospace;padding:14px 16px;border-radius:10px;background:#0a0f0d;border:1px solid var(--line)}.callout{border-left:4px solid var(--accent);padding:10px 14px;background:#122019;border-radius:0 9px 9px 0;margin-top:16px}.hidden-compat{display:none}footer{padding:28px 0 50px;color:var(--muted);font-size:.85rem}@media(max-width:900px){.controls{grid-template-columns:1fr 1fr}.buttons{grid-column:1/-1}.models{grid-template-columns:1fr}.model p{min-height:0}.explain{grid-template-columns:1fr}#stage{height:520px}}
+:root{
+  --bg:#0c1110;--panel:#131a18;--text:#eef5f0;--muted:#a9b8b0;--line:#2b3934;--accent:#9ddc8d;
+  --random:#e89b45;--memory:#d7b356;--adaptive:#59a6d8;--smart:#67c47a;--danger:#ef6b62
+}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
+.wrap{width:min(1500px,calc(100% - 28px));margin:auto}
+header{padding:46px 0 28px;background:radial-gradient(circle at 15% 10%,#24493488,transparent 34%),radial-gradient(circle at 90% 0%,#3b322488,transparent 26%),var(--bg)}
+.eyebrow{color:var(--accent);font-weight:750;letter-spacing:.08em;text-transform:uppercase;font-size:.76rem}
+h1{font-size:clamp(2.3rem,5.6vw,5rem);line-height:.96;letter-spacing:-.05em;margin:.15em 0 .25em;max-width:1200px}
+h2{font-size:clamp(1.55rem,3vw,2.45rem);letter-spacing:-.025em;margin:.1em 0 .45em}
+.lead{font-size:clamp(1rem,2vw,1.25rem);color:#d3ded8;max-width:1050px}
+.hero-note{display:inline-block;margin-top:12px;padding:7px 10px;border:1px solid var(--line);border-radius:999px;color:var(--muted);font-size:.88rem}
+section{padding:38px 0;border-top:1px solid #1c2723}
+.demo{background:#0b0f0e;border:1px solid var(--line);border-radius:16px;overflow:hidden;box-shadow:0 24px 70px #0006}
+.demo-head{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:12px 15px;background:#111816;border-bottom:1px solid var(--line)}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:.82rem;color:var(--muted)}
+.dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:5px}
+.controls{display:grid;grid-template-columns:1.2fr .9fr .9fr .9fr 1.2fr auto;gap:9px;padding:12px 14px;background:#101614;border-bottom:1px solid var(--line);align-items:end}
+.control label{font-size:.75rem;color:var(--muted);display:block;margin-bottom:4px}
+select,button,input{width:100%;background:#0d1311;color:var(--text);border:1px solid #3a4944;border-radius:8px;padding:8px}
+button{cursor:pointer;font-weight:650}.buttons{display:flex;gap:7px}.buttons button{min-width:92px}input[type=range]{padding:0}
+#stage{height:650px;background:linear-gradient(#111817,#0d1211)}#stage canvas{display:block;width:100%;height:100%}
+.models{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:var(--line);border-top:1px solid var(--line)}
+.model{background:var(--panel);padding:14px 15px}
+.model.random{border-top:4px solid var(--random)}.model.memory{border-top:4px solid var(--memory)}.model.adaptive{border-top:4px solid var(--adaptive)}.model.smart{border-top:4px solid var(--smart)}
+.model h3{margin:0 0 5px;font-size:1rem}.model p{margin:0 0 9px;color:#bcc9c2;font-size:.82rem;min-height:78px}
+.big{font-size:1.45rem;font-weight:780;font-variant-numeric:tabular-nums}.metrics{display:flex;gap:12px;flex-wrap:wrap;color:var(--muted);font-size:.78rem}
+.mini{color:var(--muted);font-size:.72rem;margin-top:5px}.meter{height:5px;background:#26312d;border-radius:99px;overflow:hidden;margin-top:5px}.meter>span{display:block;height:100%;width:100%;background:var(--accent)}
+.mc{padding:12px 14px;border-top:1px solid var(--line)}#mc{font-size:.8rem;color:#d1dbd5;margin-top:8px;line-height:1.4}
+.explain{display:grid;grid-template-columns:1fr 1fr;gap:20px}.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px}
+.formula{font:600 1.08rem ui-monospace,SFMono-Regular,Menlo,monospace;padding:14px 16px;border-radius:10px;background:#0a0f0d;border:1px solid var(--line)}
+.callout{border-left:4px solid var(--accent);padding:10px 14px;background:#122019;border-radius:0 9px 9px 0;margin-top:16px}
+.hidden-compat{display:none}footer{padding:28px 0 50px;color:var(--muted);font-size:.85rem}
+@media(max-width:1100px){.controls{grid-template-columns:1fr 1fr 1fr}.buttons{grid-column:1/-1}.models{grid-template-columns:1fr 1fr}}
+@media(max-width:700px){.controls{grid-template-columns:1fr 1fr}.models{grid-template-columns:1fr}.model p{min-height:0}.explain{grid-template-columns:1fr}#stage{height:520px}}
 </style>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/"}}</script>
 </head>
 <body>
-<header><div class="wrap"><div class="eyebrow">Ett onödigt seriöst experiment om robotgräsklippare</div><h1>Tre robotar. Samma gräsmatta.</h1><p class="lead">Ren slump, en billig studsare som lär sig av klippmotorn och en kartlagd RTK-klippare. Kör dem samtidigt.</p><div class="hero-note">Version 27 · zoom-to-fit</div></div></header>
-<main><section><div class="wrap"><div class="demo"><div class="demo-head"><strong>Live-simulering</strong><div class="legend"><span><i class="dot" style="background:var(--random)"></i>slump</span><span><i class="dot" style="background:var(--adaptive)"></i>ström-lärande</span><span><i class="dot" style="background:var(--smart)"></i>kartlagd/RTK</span></div></div>
-<div class="controls"><div class="control"><label>Gräsmatta</label><select id="shape"><option value="square">Kvadrat</option><option value="circle">Cirkel</option><option value="long">Långsmal</option><option value="L">L-form</option><option value="H" selected>Två områden + smal passage</option></select></div><div class="control"><label>Hastighet: <span id="speedVal">12×</span></label><input id="speed" type="range" min="1" max="60" value="12"></div><div class="control"><label>Klippbredd: <span id="widthVal">0,62 m</span></label><input id="width" type="range" min=".4" max="1.0" step=".02" value=".62"></div><div class="buttons"><button id="toggle">Paus</button><button id="reset">Starta om</button></div></div>
+<header><div class="wrap">
+  <div class="eyebrow">Ett onödigt seriöst experiment om robotgräsklippare</div>
+  <h1>Hur långt kommer man utan GPS?</h1>
+  <p class="lead">Fyra robotar kör samma gräsmatta: ren slump, dead reckoning med minne, samma robot med klippmotorström som extra grässensor och till sist full kartläggning/RTK.</p>
+  <div class="hero-note">Version 28 · sensor-ablation utan lookahead-fusk</div>
+</div></header>
+
+<main><section><div class="wrap"><div class="demo">
+<div class="demo-head">
+  <strong>Live-simulering</strong>
+  <div class="legend">
+    <span><i class="dot" style="background:var(--random)"></i>slump</span>
+    <span><i class="dot" style="background:var(--memory)"></i>DR + minne</span>
+    <span><i class="dot" style="background:var(--adaptive)"></i>DR + minne + klippmotor</span>
+    <span><i class="dot" style="background:var(--smart)"></i>kartlagd/RTK</span>
+  </div>
+</div>
+
+<div class="controls">
+  <div class="control"><label>Gräsmatta</label><select id="shape">
+    <option value="square">Kvadrat</option><option value="circle">Cirkel</option><option value="long">Långsmal</option><option value="L">L-form</option><option value="H" selected>Två områden + smal passage</option>
+  </select></div>
+  <div class="control"><label>Hastighet: <span id="speedVal">12×</span></label><input id="speed" type="range" min="1" max="60" value="12"></div>
+  <div class="control"><label>Klippbredd: <span id="widthVal">0,62 m</span></label><input id="width" type="range" min=".4" max="1.0" step=".02" value=".62"></div>
+  <div class="control"><label>DR-fel: <span id="driftVal">2,0 %</span></label><input id="drift" type="range" min="0" max="8" step=".5" value="2"></div>
+  <div class="control"><label>Grässignal</label><select id="grassMode">
+    <option value="patchy" selected>Ojämnt / informativt</option>
+    <option value="uniform">Jämnt men långt</option>
+    <option value="short">Redan kort och jämnt</option>
+  </select></div>
+  <div class="buttons"><button id="toggle">Paus</button><button id="reset">Starta om</button></div>
+</div>
+
 <div id="stage"></div>
+
 <div class="models">
-<div class="model random"><h3>1. Ren slump</h3><p>Ingen karta och inget minne. Kör rakt, träffar kanten, backar och väljer en ny slumpmässig riktning.</p><div class="big" id="rCov">0,0 %</div><div class="metrics"><span id="rDist">0 m</span><span id="rTime">00:00</span></div><div class="mini">Batteri <span id="rBatTxt">100 %</span></div><div class="meter"><span id="rBat"></span></div><div class="mini" id="rExtra">–</div></div>
-<div class="model adaptive"><h3>2. Klippmotor + minne</h3><p>Ingen GPS eller kamera. Klippmotorström + hjulodometri/gyro bygger en grov nytto-karta och påverkar nästa sväng.</p><div class="big" id="aCov">0,0 %</div><div class="metrics"><span id="aDist">0 m</span><span id="aTime">00:00</span></div><div class="mini">Klippmotor <span id="aMotor">–</span></div><div class="mini">Batteri <span id="aBatTxt">100 %</span></div><div class="meter"><span id="aBat"></span></div><div class="mini" id="aExtra">–</div></div>
-<div class="model smart"><h3>3. Kartlagd / RTK</h3><p>Känner sin position. Delar upp ytan i zoner och kör planerade parallella spår med kontrollerad överlappning.</p><div class="big" id="sCov">0,0 %</div><div class="metrics"><span id="sDist">0 m</span><span id="sTime">00:00</span></div><div class="mini">Batteri <span id="sBatTxt">100 %</span></div><div class="meter"><span id="sBat"></span></div><div class="mini" id="sExtra">–</div></div>
-</div><div class="mc"><button id="mcBtn">Monte Carlo: slump mot kartlagd</button><div id="mc"></div></div></div><div class="hidden-compat"><select id="leftMode"><option value="random" selected>random</option></select><span id="rName"></span><span id="rMotor"></span></div></div></section>
-<section><div class="wrap"><div class="eyebrow">Kortversionen</div><h2>Dubbelklippning kostar</h2><div class="explain"><div class="card"><p>Den teoretiska drömgränsen är area delat med klippbredd.</p><div class="formula">L<sub>ideal</sub> = A / b</div></div><div class="card"><p>Med ren slump blir de sista procenten snabbt dyra.</p><div class="formula">q ≈ 1 − exp(−bL/A)</div></div></div><div class="callout"><strong>Formen spelar roll:</strong> smala passager och uppdelade ytor är särskilt jobbiga för en studsare.</div></div></section></main>
+  <div class="model random">
+    <h3>1. Ren slump</h3>
+    <p>Ingen position och inget minne. Kör tills den känner kanten, backar och väljer en ny slumpmässig riktning.</p>
+    <div class="big" id="rCov">0,0 %</div><div class="metrics"><span id="rDist">0 m</span><span id="rTime">00:00</span></div>
+    <div class="mini">Batteri <span id="rBatTxt">100 %</span></div><div class="meter"><span id="rBat"></span></div><div class="mini" id="rExtra">–</div>
+  </div>
+
+  <div class="model memory">
+    <h3>2. Dead reckoning + minne</h3>
+    <p>Bygger en egen grov karta från hjulens rörelse och tidigare kantträffar. Vet inte den riktiga formen och ser inte framför sig.</p>
+    <div class="big" id="mCov">0,0 %</div><div class="metrics"><span id="mDist">0 m</span><span id="mTime">00:00</span></div>
+    <div class="mini">Batteri <span id="mBatTxt">100 %</span></div><div class="meter"><span id="mBat"></span></div><div class="mini" id="mExtra">–</div>
+  </div>
+
+  <div class="model adaptive">
+    <h3>3. + klippmotor som grässensor</h3>
+    <p>Samma start, samma dead-reckoning-fel och samma kartlogik som modell 2. Enda extra signalen är lokal klippmotorström.</p>
+    <div class="big" id="aCov">0,0 %</div><div class="metrics"><span id="aDist">0 m</span><span id="aTime">00:00</span></div>
+    <div class="mini">Klippmotor <span id="aMotor">–</span></div>
+    <div class="mini">Batteri <span id="aBatTxt">100 %</span></div><div class="meter"><span id="aBat"></span></div><div class="mini" id="aExtra">–</div>
+  </div>
+
+  <div class="model smart">
+    <h3>4. Kartlagd / RTK</h3>
+    <p>Känner sin position och gräsmattans geometri. Kör planerade parallella spår och är referensen för vad riktig kartläggning kan ge.</p>
+    <div class="big" id="sCov">0,0 %</div><div class="metrics"><span id="sDist">0 m</span><span id="sTime">00:00</span></div>
+    <div class="mini">Batteri <span id="sBatTxt">100 %</span></div><div class="meter"><span id="sBat"></span></div><div class="mini" id="sExtra">–</div>
+  </div>
+</div>
+
+<div class="mc">
+  <button id="mcBtn">Monte Carlo: slump mot kartlagd</button><div id="mc"></div>
+</div>
+</div>
+
+<div class="hidden-compat">
+  <select id="leftMode"><option value="random" selected>random</option></select>
+  <span id="rName"></span><span id="rMotor"></span>
+</div>
+</div></section>
+
+<section><div class="wrap">
+  <div class="eyebrow">Vad testar vi egentligen?</div>
+  <h2>Kan en billig robot bygga en tillräckligt bra karta själv?</h2>
+  <div class="explain">
+    <div class="card"><p>Modell 2 och 3 känner bara sin uppskattade pose från hjulen, sin egen historik och kantkontakter de faktiskt redan råkat ut för. De får ingen dold polygon eller lookahead.</p><div class="formula">posê ← hjulodometri → egen karta</div></div>
+    <div class="card"><p>Modell 3 får dessutom använda bladlast lokalt: hög ström betyder ungefär “här fanns mer gräs än normalt”.</p><div class="formula">I<sub>blad</sub> → lokal grässignal</div></div>
+  </div>
+  <div class="callout"><strong>Kort och jämnt gräs är medvetet ett specialfall:</strong> då bär klippmotorströmmen nästan ingen information. Men då är också behovet av att hitta “missade” områden mindre — mattan ser redan bra ut.</div>
+  <div class="callout"><strong>Avgränsning:</strong> retur till laddstation är fortfarande idealiserad och hålls utanför själva styrjämförelsen.</div>
+</div></section>
+</main>
+
 <footer><div class="wrap">Geometri- och algoritmexperiment, inte ett produkttest.</div></footer>
-<script type="module" src="loader.js?v=27"></script>
+<script type="module" src="loader.js?v=28"></script>
 </body></html>
