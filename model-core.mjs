@@ -35,7 +35,13 @@ export function makeProfile({
   const leftScale = 1 + (r() * 2 - 1) * maxBias;
   const rightScale = 1 + (r() * 2 - 1) * maxBias;
   const slipSigma = 0.0015 + maxBias * 0.22;
-  return { driftPct, seed, wheelBase, leftScale, rightScale, slipSigma };
+  const gyroBias = (r() * 2 - 1) * (0.0015 + maxBias * 0.012);
+  const gyroNoise = 0.0025 + maxBias * 0.010;
+  return {
+    driftPct, seed, wheelBase,
+    leftScale, rightScale, slipSigma,
+    gyroBias, gyroNoise,
+  };
 }
 
 export function createEstimator({
@@ -54,6 +60,10 @@ export function createEstimator({
     rng: mulberry32(profile.seed),
     cells: new Map(),
     distanceMeasured: 0,
+    slipEvents: 0,
+    lastSlipScore: 0,
+    poseCorrections: 0,
+    correctionDistance: 0,
   };
 }
 
@@ -76,7 +86,7 @@ export function getCell(est, gx, gy, create = false) {
 }
 
 export function measureWheels(est, leftTrue, rightTrue) {
-  const { leftScale, rightScale, slipSigma } = est.profile;
+  const { leftScale = 1, rightScale = 1, slipSigma = 0 } = est.profile;
   const r = est.rng;
   const leftNoise = Math.abs(leftTrue) * slipSigma * gaussian(r);
   const rightNoise = Math.abs(rightTrue) * slipSigma * gaussian(r);
@@ -84,6 +94,12 @@ export function measureWheels(est, leftTrue, rightTrue) {
     leftTrue * leftScale + leftNoise,
     rightTrue * rightScale + rightNoise,
   ];
+}
+
+export function measureGyro(est, trueDeltaTheta, dt = 1) {
+  const { gyroBias = 0, gyroNoise = 0 } = est.profile;
+  const t = Math.max(1e-4, dt);
+  return trueDeltaTheta + gyroBias * t + gyroNoise * Math.sqrt(t) * gaussian(est.rng);
 }
 
 export function integrateMeasuredWheels(est, leftMeasured, rightMeasured) {
@@ -98,9 +114,52 @@ export function integrateMeasuredWheels(est, leftMeasured, rightMeasured) {
   return est;
 }
 
+export function integrateMeasuredWheelGyro(
+  est,
+  leftMeasured,
+  rightMeasured,
+  gyroDelta,
+  {
+    gyroWeight = 0.78,
+    slipGyroWeight = 0.96,
+    slipThreshold = 0.055,
+  } = {},
+) {
+  const b = est.profile.wheelBase;
+  const ds = (leftMeasured + rightMeasured) / 2;
+  const wheelDelta = (rightMeasured - leftMeasured) / b;
+  const disagreement = Math.abs(wheelDelta - gyroDelta);
+  const slipping = disagreement > slipThreshold;
+  const g = slipping ? slipGyroWeight : gyroWeight;
+  const dtheta = (1 - g) * wheelDelta + g * gyroDelta;
+  const mid = est.heading + dtheta / 2;
+
+  est.x += ds * Math.cos(mid);
+  est.y += ds * Math.sin(mid);
+  est.heading = wrapAngle(est.heading + dtheta);
+  est.distanceMeasured += Math.abs(ds);
+  est.lastSlipScore = disagreement;
+  if (slipping) est.slipEvents += 1;
+
+  return { est, slipping, disagreement, wheelDelta, gyroDelta, fusedDelta: dtheta };
+}
+
 export function integrateTrueWheelMotion(est, leftTrue, rightTrue) {
   const [l, r] = measureWheels(est, leftTrue, rightTrue);
   return integrateMeasuredWheels(est, l, r);
+}
+
+export function integrateTrueWheelGyroMotion(
+  est,
+  leftTrue,
+  rightTrue,
+  trueDeltaTheta,
+  dt = 1,
+  options = {},
+) {
+  const [l, r] = measureWheels(est, leftTrue, rightTrue);
+  const gyro = measureGyro(est, trueDeltaTheta, dt);
+  return integrateMeasuredWheelGyro(est, l, r, gyro, options);
 }
 
 export function observePass(est, motorNorm = 0) {
@@ -133,6 +192,51 @@ export function observeBoundary(est, ahead = 0.62) {
   const c = getCell(est, gx, gy, true);
   c.blocked += 1;
   return c;
+}
+
+function expectedMotorAtCell(est, gx, gy) {
+  const c = getCell(est, gx, gy, false);
+  if (!c) return 0.58;
+  if (c.blocked) return 0.50;
+  if (c.visits > 0) return clamp(0.05 + c.loadEMA * 0.18, 0.05, 0.28);
+  return clamp(c.grassHint, 0.18, 0.95);
+}
+
+export function correctPoseFromMotor(est, motorNorm, {
+  radiusCells = 1,
+  gain = 0.18,
+  minImprovement = 0.10,
+  shiftPenalty = 0.11,
+} = {}) {
+  if (!est.useMotor) return { corrected: false, distance: 0 };
+  const obs = clamp(motorNorm, 0, 1);
+  const [gx0, gy0] = cellCoords(est);
+  const currentExpected = expectedMotorAtCell(est, gx0, gy0);
+  const currentCost = Math.abs(currentExpected - obs);
+  let best = { gx: gx0, gy: gy0, cost: currentCost };
+
+  for (let dy = -radiusCells; dy <= radiusCells; dy++) {
+    for (let dx = -radiusCells; dx <= radiusCells; dx++) {
+      const gx = gx0 + dx, gy = gy0 + dy;
+      const expected = expectedMotorAtCell(est, gx, gy);
+      const cost = Math.abs(expected - obs) + shiftPenalty * Math.hypot(dx, dy);
+      if (cost < best.cost) best = { gx, gy, cost };
+    }
+  }
+
+  if (currentCost - best.cost < minImprovement || (best.gx === gx0 && best.gy === gy0)) {
+    return { corrected: false, distance: 0 };
+  }
+
+  const tx = (best.gx + 0.5) * est.cellSize;
+  const ty = (best.gy + 0.5) * est.cellSize;
+  const ox = est.x, oy = est.y;
+  est.x += (tx - est.x) * gain;
+  est.y += (ty - est.y) * gain;
+  const d = Math.hypot(est.x - ox, est.y - oy);
+  est.poseCorrections += 1;
+  est.correctionDistance += d;
+  return { corrected: true, distance: d, gx: best.gx, gy: best.gy };
 }
 
 export function scoreRay(est, relativeAngle, {
@@ -173,6 +277,7 @@ export function chooseTurn(est, relativeAngles, {
   exploration = 0,
   random = Math.random,
   scoreOptions = {},
+  turnPenalty = 0,
 } = {}) {
   if (!relativeAngles.length) throw new Error('relativeAngles must not be empty');
   if (exploration > 0 && random() < exploration) {
@@ -182,7 +287,9 @@ export function chooseTurn(est, relativeAngles, {
   let best = relativeAngles[0];
   let bestScore = -Infinity;
   for (const a of relativeAngles) {
-    const s = scoreRay(est, a, scoreOptions) + (random() - 0.5) * 0.08;
+    const s = scoreRay(est, a, scoreOptions)
+      - Math.abs(a) * turnPenalty
+      + (random() - 0.5) * 0.08;
     if (s > bestScore) {
       bestScore = s;
       best = a;
