@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="Fyra robotgräsklipparstrategier på samma gräsmatta: slump, dead reckoning med minne, samma med klippmotorström och kartlagd RTK.">
+<meta name="description" content="Fyra robotgräsklipparstrategier på samma gräsmatta: slump, dead reckoning med gyro och minne, samma med klippmotorström och kartlagd RTK.">
 <title>Klippare – fyra strategier på samma gräsmatta</title>
 <style>
 :root{
@@ -49,8 +49,8 @@ button{cursor:pointer;font-weight:650}.buttons{display:flex;gap:7px}.buttons but
 <header><div class="wrap">
   <div class="eyebrow">Ett onödigt seriöst experiment om robotgräsklippare</div>
   <h1>Hur långt kommer man utan GPS?</h1>
-  <p class="lead">Fyra robotar kör samma gräsmatta: ren slump, dead reckoning med minne, samma robot med klippmotorström som extra grässensor och till sist full kartläggning/RTK.</p>
-  <div class="hero-note">Version 29 · fyrvägs Monte Carlo</div>
+  <p class="lead">Fyra robotar kör samma gräsmatta: ren slump, dead reckoning med hjul + gyro + minne, samma robot med klippmotorström som extra grässensor och till sist full kartläggning/RTK.</p>
+  <div class="hero-note">Version 30 · gyro-fusion + aktiv MCU-planner</div>
 </div></header>
 
 <main><section><div class="wrap"><div class="demo">
@@ -58,8 +58,8 @@ button{cursor:pointer;font-weight:650}.buttons{display:flex;gap:7px}.buttons but
   <strong>Live-simulering</strong>
   <div class="legend">
     <span><i class="dot" style="background:var(--random)"></i>slump</span>
-    <span><i class="dot" style="background:var(--memory)"></i>DR + minne</span>
-    <span><i class="dot" style="background:var(--adaptive)"></i>DR + minne + klippmotor</span>
+    <span><i class="dot" style="background:var(--memory)"></i>DR + gyro + minne</span>
+    <span><i class="dot" style="background:var(--adaptive)"></i>DR + gyro + minne + klippmotor</span>
     <span><i class="dot" style="background:var(--smart)"></i>kartlagd/RTK</span>
   </div>
 </div>
@@ -70,7 +70,7 @@ button{cursor:pointer;font-weight:650}.buttons{display:flex;gap:7px}.buttons but
   </select></div>
   <div class="control"><label>Hastighet: <span id="speedVal">12×</span></label><input id="speed" type="range" min="1" max="60" value="12"></div>
   <div class="control"><label>Klippbredd: <span id="widthVal">0,62 m</span></label><input id="width" type="range" min=".4" max="1.0" step=".02" value=".62"></div>
-  <div class="control"><label>DR-fel: <span id="driftVal">2,0 %</span></label><input id="drift" type="range" min="0" max="8" step=".5" value="2"></div>
+  <div class="control"><label>DR-fel / slir: <span id="driftVal">2,0 %</span></label><input id="drift" type="range" min="0" max="8" step=".5" value="2"></div>
   <div class="control"><label>Grässignal</label><select id="grassMode">
     <option value="patchy" selected>Ojämnt / informativt</option>
     <option value="uniform">Jämnt men långt</option>
@@ -90,15 +90,15 @@ button{cursor:pointer;font-weight:650}.buttons{display:flex;gap:7px}.buttons but
   </div>
 
   <div class="model memory">
-    <h3>2. Dead reckoning + minne</h3>
-    <p>Bygger en egen grov karta från hjulens rörelse och tidigare kantträffar. Vet inte den riktiga formen och ser inte framför sig.</p>
+    <h3>2. Hjul + gyro + minne</h3>
+    <p>Fusionerar hjulodometri med ett billigt gyro, flaggar misstänkt slirning och styr aktivt mot delar av sin egen grova karta som verkar minst besökta.</p>
     <div class="big" id="mCov">0,0 %</div><div class="metrics"><span id="mDist">0 m</span><span id="mTime">00:00</span></div>
     <div class="mini">Batteri <span id="mBatTxt">100 %</span></div><div class="meter"><span id="mBat"></span></div><div class="mini" id="mExtra">–</div>
   </div>
 
   <div class="model adaptive">
     <h3>3. + klippmotor som grässensor</h3>
-    <p>Samma start, samma dead-reckoning-fel och samma kartlogik som modell 2. Enda extra signalen är lokal klippmotorström.</p>
+    <p>Samma MCU-planner och samma hjul/gyro-sensorer som modell 2. Klippmotorströmmen får dessutom göra små lokala 3×3-korrigeringar av den egna kartpositionen.</p>
     <div class="big" id="aCov">0,0 %</div><div class="metrics"><span id="aDist">0 m</span><span id="aTime">00:00</span></div>
     <div class="mini">Klippmotor <span id="aMotor">–</span></div>
     <div class="mini">Batteri <span id="aBatTxt">100 %</span></div><div class="meter"><span id="aBat"></span></div><div class="mini" id="aExtra">–</div>
@@ -114,7 +114,7 @@ button{cursor:pointer;font-weight:650}.buttons{display:flex;gap:7px}.buttons but
 
 <div class="mc">
   <strong>Testa 100 nya körningar</strong>
-  <p class="mc-help">Vad händer? Vi nollställer gräsmattan 100 gånger. I varje omgång kör alla fyra strategier på samma form. Slump, DR + minne och DR + minne + klippmotor får samma startpunkt. Modell 2 och 3 får dessutom exakt samma dead-reckoning-fel. Vi stoppar när 95 % av gräset är klippt och jämför körsträckan. <strong>Kortare är bättre.</strong></p>
+  <p class="mc-help">Vad händer? Vi nollställer gräsmattan 100 gånger. I varje omgång kör alla fyra strategier på samma form. DR-robotarna får samma start och sensorprofil, möter simulerad slirning och använder gyro för att korrigera rotationsfel. Vi stoppar när 95 % av gräset är klippt och jämför körsträckan. <strong>Kortare är bättre.</strong></p>
   <button id="mcBtn">Kör 100 jämförbara försök</button><div id="mc" class="mc-results"></div>
 </div>
 </div>
@@ -129,14 +129,15 @@ button{cursor:pointer;font-weight:650}.buttons{display:flex;gap:7px}.buttons but
   <div class="eyebrow">Vad testar vi egentligen?</div>
   <h2>Kan en billig robot bygga en tillräckligt bra karta själv?</h2>
   <div class="explain">
-    <div class="card"><p>Modell 2 och 3 känner bara sin uppskattade pose från hjulen, sin egen historik och kantkontakter de faktiskt redan råkat ut för. De får ingen dold polygon eller lookahead.</p><div class="formula">posê ← hjulodometri → egen karta</div></div>
-    <div class="card"><p>Modell 3 får dessutom använda bladlast lokalt: hög ström betyder ungefär “här fanns mer gräs än normalt”.</p><div class="formula">I<sub>blad</sub> → lokal grässignal</div></div>
+    <div class="card"><p>Modell 2 och 3 använder bara hjul, gyro, egen historik och kantkontakter de faktiskt redan råkat ut för. Gyrot mäter kortsiktig rotation och hjälper när hjulen säger att roboten svängt men chassit inte gjort det.</p><div class="formula">posê ← hjul + gyro → egen karta</div></div>
+    <div class="card"><p>Modell 3 får dessutom använda bladlast lokalt. Om kartan säger “redan klippt” men bladet plötsligt arbetar hårt provas bara närmaste 3×3 kartceller och positionen nudgas mot den mest rimliga.</p><div class="formula">I<sub>blad</sub> → billig lokal kartkorrigering</div></div>
   </div>
-  <div class="callout"><strong>Kort och jämnt gräs är medvetet ett specialfall:</strong> då bär klippmotorströmmen nästan ingen information. Men då är också behovet av att hitta “missade” områden mindre — mattan ser redan bra ut.</div>
+  <div class="callout"><strong>Gyrot löser inte allt:</strong> asymmetrisk hjulslirning syns tydligt när hjulrotation och gyro inte stämmer överens. Om båda hjulen spinner ungefär lika mycket kan däremot körsträckan fortfarande bli fel — utan GPS/kamera/lidar finns ingen magisk extern längdreferens.</div>
+  <div class="callout"><strong>Kort och jämnt gräs:</strong> då bär klippmotorströmmen nästan ingen information, men behovet av att hitta missade områden är också mindre eftersom mattan redan ser bra ut.</div>
   <div class="callout"><strong>Avgränsning:</strong> retur till laddstation är fortfarande idealiserad och hålls utanför själva styrjämförelsen.</div>
 </div></section>
 </main>
 
 <footer><div class="wrap">Geometri- och algoritmexperiment, inte ett produkttest.</div></footer>
-<script type="module" src="loader.js?v=29"></script>
+<script type="module" src="loader.js?v=30"></script>
 </body></html>
