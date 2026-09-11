@@ -1,0 +1,253 @@
+  const dirs=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+
+  while(qi<q.length){
+    const cur=q[qi++];
+    if(cur===id(...tc)){endId=cur;break}
+    const[cx,cy]=coord(cur),cw=world(cx,cy);
+    for(const[dx,dy]of dirs){
+      const x=cx+dx,y=cy+dy;
+      if(x<0||y<0||x>=nx||y>=ny)continue;
+      const k=id(x,y);
+      if(prev[k]!==-2)continue;
+      const nw=world(x,y);
+      if(!safeAt(nw[0],nw[1],poly,r))continue;
+      // Important for concave corners: even adjacent diagonal grid points
+      // may not be connected by a legal robot-sized segment.
+      if(!straightInside(cw,nw,poly,r))continue;
+      prev[k]=cur;q.push(k);
+    }
+  }
+  if(endId<0)return null;
+
+  const rev=[];
+  for(let k=endId;k>=0;k=prev[k]){
+    const[x,y]=coord(k);rev.push(world(x,y));
+    if(prev[k]===-1)break;
+  }
+  rev.reverse();
+
+  // Include exact endpoints. Their connecting segments were checked above.
+  const raw=[start,...rev,goal];
+
+  // Line-of-sight simplification, but ONLY across segments proven safe for
+  // the whole circular mower footprint.
+  const out=[];
+  let i=0;
+  while(i<raw.length){
+    out.push(raw[i]);
+    if(i===raw.length-1)break;
+    let j=raw.length-1;
+    while(j>i+1 && !straightInside(raw[i],raw[j],poly,r))j--;
+    i=j;
+  }
+
+  // Caller already sits at start.
+  return out.slice(1);
+}
+
+function smartRoute(poly,width,startPoint=null){
+  const b=bounds(poly),spacing=width*.90,margin=MOWER_CLEARANCE+.05,rows=[];
+  for(let y=b.minY+margin;y<=b.maxY-margin;y+=spacing){
+    const segs=scanIntersections(poly,y)
+      .map(([a,c])=>[a+margin,c-margin])
+      .filter(seg=>seg[1]>seg[0] && straightInside([seg[0],y],[seg[1],y],poly,MOWER_CLEARANCE));
+    if(segs.length)rows.push({y,segs})
+  }
+  if(!rows.length)return[];
+  const gaps=[];
+  for(const r of rows)if(r.segs.length>1)for(let i=0;i<r.segs.length-1;i++)if(r.segs[i+1][0]-r.segs[i][1]>width*1.2)gaps.push((r.segs[i][1]+r.segs[i+1][0])/2);
+  gaps.sort((a,b)=>a-b);const cl=[];
+  for(const x of gaps){let c=cl[cl.length-1];if(!c||Math.abs(x-c.mean)>Math.max(width*1.4,(b.maxX-b.minX)*.07))cl.push(c={xs:[x],mean:x});else{c.xs.push(x);c.mean=c.xs.reduce((a,v)=>a+v,0)/c.xs.length}}
+  const sep=cl.filter(c=>c.xs.length>=Math.max(2,Math.floor(rows.length*.15))).map(c=>c.mean).sort((a,b)=>a-b);
+  const cuts=[-Infinity,...sep,Infinity],zones=Array.from({length:cuts.length-1},()=>[]);
+  for(const r of rows)for(const[a,c]of r.segs)for(let z=0;z<zones.length;z++){const lo=Math.max(a,cuts[z]),hi=Math.min(c,cuts[z+1]);if(hi-lo>.18)zones[z].push({y:r.y,a:lo,c:hi})}
+  const alive=zones.filter(z=>z.length);
+  function zonePath(zone,start){
+    zone=[...zone].sort((a,b)=>a.y-b.y);const vars=[];
+    for(const rev of[false,true])for(const init of[false,true]){const ord=rev?[...zone].reverse():zone,passes=[];let flip=init;
+      for(const r of ord){passes.push(flip?[[r.c,r.y],[r.a,r.y]]:[[r.a,r.y],[r.c,r.y]]);flip=!flip}
+      const cost=start?Math.hypot(passes[0][0][0]-start[0],passes[0][0][1]-start[1]):passes[0][0][0];vars.push({passes,cost})}
+    vars.sort((a,b)=>a.cost-b.cost);const p=vars[0].passes,out=[{p:p[0][0],mow:true},{p:p[0][1],mow:true}];
+    for(let i=1;i<p.length;i++){{
+        const link=bfsPath(out[out.length-1].p,p[i][0],poly,.28,MOWER_CLEARANCE);
+        if(!link)continue;
+        for(const q of link)out.push({p:q,mow:false});
+        out.push({p:p[i][1],mow:true});
+      }}return out
+  }
+  const remain=[...alive],out=[];let current=startPoint;
+  while(remain.length){
+    let bi=0,bp=null,bc=Infinity;
+    for(let i=0;i<remain.length;i++){
+      const p=zonePath(remain[i],current);
+      if(!p || !p.length)continue;
+      const c=current
+        ? Math.hypot(p[0].p[0]-current[0],p[0].p[1]-current[1])
+        : p[0].p[0];
+      if(c<bc){bc=c;bi=i;bp=p}
+    }
+    if(!bp)break;
+    if(out.length){
+      const link=bfsPath(out[out.length-1].p,bp[0].p,poly,.28,MOWER_CLEARANCE);
+      if(link){
+        for(const q of link)out.push({p:q,mow:false});
+        out.push(...bp.slice(1));
+      }
+    }else{
+      out.push(...bp);
+    }
+    current=out[out.length-1].p;
+    remain.splice(bi,1);
+  }
+  return out
+}
+
+let cutWidth=.62,simSpeed=12,running=true,worlds=[],simObjects=[];
+function addSim(o){o.userData.sim=true;scene.add(o);simObjects.push(o);return o}
+function clearSim(){for(const o of simObjects)scene.remove(o);simObjects=[]}
+
+
+function makeGrassField(poly,offset){
+  const A=areaPoly(poly),count=Math.min(4200,Math.max(1400,Math.floor(A*31)));
+  const geom=new THREE.PlaneGeometry(.040,.36);geom.translate(0,.18,0);
+  const material=new THREE.MeshStandardMaterial({color:0x3f9148,side:THREE.DoubleSide,roughness:1,metalness:0,vertexColors:true});
+  const mesh=new THREE.InstancedMesh(geom,material,count);
+  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);mesh.castShadow=false;mesh.receiveShadow=true;
+  const data=[],buckets=new Map(),cell=.48,dummy=new THREE.Object3D();
+  const freshA=new THREE.Color(0x367f3e),freshB=new THREE.Color(0x58a34f);
+  const key=(gx,gy)=>gx+','+gy;
+  for(let i=0;i<count;i++){
+    let p=randomPoint(poly,.03),x=p[0],y=p[1];
+    const angle=Math.random()*Math.PI, h=.23+Math.random()*.20, sx=.72+Math.random()*.65;
+    const lean=(Math.random()-.5)*.17;
+    data.push({x,y,angle,h,sx,lean,cut:false});
+    dummy.position.set(offset+x,.012,y);dummy.rotation.set(lean,angle,(Math.random()-.5)*.08);dummy.scale.set(sx,h/.36,1);dummy.updateMatrix();
+    mesh.setMatrixAt(i,dummy.matrix);
+    const c=freshA.clone().lerp(freshB,Math.random());mesh.setColorAt(i,c);
+    const gx=Math.floor(x/cell),gy=Math.floor(y/cell),k=key(gx,gy);if(!buckets.has(k))buckets.set(k,[]);buckets.get(k).push(i);
+  }
+  mesh.instanceMatrix.needsUpdate=true;if(mesh.instanceColor)mesh.instanceColor.needsUpdate=true;addSim(mesh);
+  return{mesh,data,buckets,cell,offset,dummy,key};
+}
+
+function cutGrassField(field,x,y,r){
+  if(!field)return;
+  const {mesh,data,buckets,cell,offset,dummy,key}=field,r2=r*r;
+  const gx0=Math.floor((x-r)/cell),gx1=Math.floor((x+r)/cell),gy0=Math.floor((y-r)/cell),gy1=Math.floor((y+r)/cell);
+  let changed=false;
+  const cutA=new THREE.Color(0x63a954),cutB=new THREE.Color(0x82ba68);
+  for(let gy=gy0;gy<=gy1;gy++)for(let gx=gx0;gx<=gx1;gx++){
+    const ids=buckets.get(key(gx,gy));if(!ids)continue;
+    for(const i of ids){const d=data[i];if(d.cut)continue;const dx=d.x-x,dy=d.y-y;if(dx*dx+dy*dy>r2)continue;
+      d.cut=true;const h=.075+Math.random()*.035;
+      dummy.position.set(offset+d.x,.012,d.y);dummy.rotation.set(d.lean*.25,d.angle,0);dummy.scale.set(d.sx*.95,h/.36,1);dummy.updateMatrix();mesh.setMatrixAt(i,dummy.matrix);
+      mesh.setColorAt(i,cutA.clone().lerp(cutB,Math.random()));changed=true;
+    }
+  }
+  if(changed){mesh.instanceMatrix.needsUpdate=true;if(mesh.instanceColor)mesh.instanceColor.needsUpdate=true}
+}
+
+
+function makeLearningMap(poly,start){
+  const b=bounds(poly),cell=.72,nx=Math.ceil((b.maxX-b.minX)/cell),ny=Math.ceil((b.maxY-b.minY)/cell);
+  const interest=new Float32Array(nx*ny),visits=new Uint16Array(nx*ny),loadEMA=new Float32Array(nx*ny);
+  interest.fill(.72);
+  const idx=(x,y)=>{
+    const gx=Math.floor((x-b.minX)/cell),gy=Math.floor((y-b.minY)/cell);
+    return gx<0||gy<0||gx>=nx||gy>=ny?-1:gy*nx+gx;
+  };
+  return{b,cell,nx,ny,interest,visits,loadEMA,idx,odoX:start[0],odoY:start[1],scaleErr:(Math.random()-.5)*.018};
+}
+function grassDensity(x,y){
+  return Math.max(.65,Math.min(1.25,.91+.13*Math.sin(x*.73+y*.27)+.10*Math.cos(y*.59-x*.31)));
+}
+function sampleMotorCurrent(w){
+  const fresh=w.lawn.sampleUncut(w.x,w.y,cutWidth*.48);
+  const density=grassDensity(w.x,w.y);
+  const noise=(Math.random()-.5)*.16;
+  return Math.max(1.05,1.25+3.8*fresh*density+noise);
+}
+function adaptiveObserve(w,current){
+  const m=w.learn;if(!m)return;
+  const i=m.idx(m.odoX,m.odoY);if(i<0)return;
+  const norm=Math.max(0,Math.min(1,(current-1.25)/4.0));
+  m.visits[i]++;
+  m.loadEMA[i]=m.loadEMA[i]?m.loadEMA[i]*.72+norm*.28:norm;
+  // We just mowed this cell, so its remaining utility becomes low.
+  m.interest[i]=Math.max(.03,m.interest[i]*.22);
+  // High blade load is evidence that nearby still-unknown cells may also
+  // contain useful grass. Spread a small prior to neighbours.
+  const gx=i%m.nx,gy=Math.floor(i/m.nx);
+  for(let yy=Math.max(0,gy-1);yy<=Math.min(m.ny-1,gy+1);yy++)for(let xx=Math.max(0,gx-1);xx<=Math.min(m.nx-1,gx+1);xx++){
+    const j=yy*m.nx+xx;if(j===i||m.visits[j])continue;
+    m.interest[j]=Math.max(m.interest[j],.55+.35*norm);
+  }
+}
+function updateOdometry(w,dx,dy){
+  if(!w.learn)return;
+  const e=1+w.learn.scaleErr;
+  w.learn.odoX+=dx*e+(Math.random()-.5)*.0008;
+  w.learn.odoY+=dy*e+(Math.random()-.5)*.0008;
+}
+function adaptiveRayScore(w,heading){
+  const m=w.learn;if(!m)return-Math.random();
+  let score=0,last=-2,travel=0;
+  for(let d=.45;d<=4.2;d+=.36){
+    const x=w.x+Math.cos(heading)*d,y=w.y+Math.sin(heading)*d;
+    if(!safeAt(x,y,w.poly,w.bodyR)){score-=1.4;break}
+    const ex=m.odoX+Math.cos(heading)*d,ey=m.odoY+Math.sin(heading)*d,i=m.idx(ex,ey);
+    if(i<0)continue;
+    if(i!==last){
+      const unseen=m.visits[i]===0;
+      score+=(unseen?1.0:.10)+m.interest[i]*.75-Math.min(1,m.visits[i])*.25;
+      last=i;
+    }
+    travel=d;
+  }
+  return score+travel*.06+(Math.random()-.5)*.18;
+}
+function chooseAdaptiveTurn(w){
+  // Occasional exploration prevents a greedy learner getting trapped in a
+  // locally attractive pattern.
+  if(Math.random()<.14)return(Math.random()<.5?-1:1)*(1.05+Math.random()*1.8);
+  const rel=[-.55,.55,-.9,.9,-1.25,1.25,-1.62,1.62,-2.05,2.05,-2.55,2.55];
+  let best=rel[0],bestScore=-Infinity;
+  for(const a of rel){
+    const h=w.heading+a,score=adaptiveRayScore(w,h);
+    if(score>bestScore){bestScore=score;best=a}
+  }
+  return best;
+}
+
+function createWorld(poly,offset,kind){
+  const lawn=makeLawnTexture(poly),b=lawn.b;
+  const plane=new THREE.Mesh(new THREE.PlaneGeometry(lawn.w,lawn.h),new THREE.MeshStandardMaterial({map:lawn.tex,transparent:true,alphaTest:.05,roughness:1}));
+  plane.rotation.x=-Math.PI/2;plane.position.set(offset+(b.minX+b.maxX)/2,.005,(b.minY+b.maxY)/2);plane.receiveShadow=true;addSim(plane);
+
+  // subtle curb/border line
+  const pts=poly.map(([x,y])=>new THREE.Vector3(offset+x,.03,y));pts.push(pts[0].clone());
+  const border=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:0x91a196,transparent:true,opacity:.55}));addSim(border);
+
+  const grass=makeGrassField(poly,offset);
+
+  const dp=dockPoint(poly),dock=makeDock();dock.position.set(offset+dp[0],0,dp[1]);dock.rotation.y=Math.PI;addSim(dock);
+  const mower=mowerMesh(kind);addSim(mower);
+  const start=kind==='smart'?dp:randomPoint(poly,MOWER_CLEARANCE);
+
+  // Den systematiska roboten lämnar faktiskt dockan, kör till första zonen,
+  // klipper rutten och går sedan hem igen. Transporten räknas i tid/sträcka.
+  let route=[];
+  if(kind==='smart'){
+    const mowing=smartRoute(poly,cutWidth,dp);
+    if(mowing.length){
+      const outbound=bfsPath(dp,mowing[0].p,poly,.28,MOWER_CLEARANCE);
+      if(outbound){
+        for(const q of outbound)route.push({p:q,mow:false});
+        route.push(...mowing);
+        const last=mowing[mowing.length-1].p;
+        const home=bfsPath(last,dp,poly,.28,MOWER_CLEARANCE);
+        if(home)for(const q of home)route.push({p:q,mow:false});
+      }
+    }
+  }
+
