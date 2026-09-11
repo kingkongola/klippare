@@ -173,8 +173,6 @@
   </div>
 </section>
 
-
-
 <section>
   <div class="wrap">
     <div class="eyebrow">Vad modellen försöker få rätt</div>
@@ -294,7 +292,8 @@ function mowerMesh(kind){
     for(const z of[-.44,.44]){cyl(.19,.13,rubber,-.2,.2,z,Math.PI/2);cyl(.095,.137,metal,-.2,.2,z,Math.PI/2)}
     cyl(.10,.08,rubber,.4,.12,0,0,0,Math.PI/2);
     cyl(.32,.035,metal,.02,.085,0);box(.52,.025,.05,metal,.02,.065,0);
-    cyl(.07,.035,accent,.05,.72,0); cyl(.045,.045,mat(0xd73b34,.35),.05,.75,0);
+    cyl(.07,.035,accent,.05,.72,0);
+    cyl(.045,.045,mat(0xd73b34,.35),.05,.75,0);
     box(.24,.035,.13,glass,-.18,.695,0);
     box(.035,.035,.23,metal,.655,.34,-.31);box(.035,.035,.23,metal,.655,.34,.31);
   }else{
@@ -311,7 +310,9 @@ function mowerMesh(kind){
     cyl(.33,.035,metal,.04,.083,0);box(.56,.022,.052,metal,.04,.062,0);
     box(.12,.14,.44,dark,.48,.67,0);
     for(const z of[-.12,.12]){cyl(.05,.045,glass,.548,.68,z,0,0,Math.PI/2);cyl(.017,.048,mat(0x79b9d2,.15,.35),.575,.68,z,0,0,Math.PI/2)}
-    cyl(.025,.30,metal,-.13,.78,0); cyl(.115,.065,glass,-.13,.95,0); cyl(.075,.018,lime,-.13,.997,0);
+    cyl(.025,.30,metal,-.13,.78,0);
+    cyl(.115,.065,glass,-.13,.95,0);
+    cyl(.075,.018,lime,-.13,.997,0);
     for(const z of[-.27,.27])box(.035,.07,.11,mat(0xf4e9bc,.2),.575,.43,z);
     box(.04,.07,.38,mat(0xc93832,.35),-.58,.43,0);
   }
@@ -350,6 +351,7 @@ function bfsPath(start,goal,poly,step=.45){
   }
   rev.reverse();
   rev.push(goal);
+
   const safe=[];
   let i=0;
   while(i<rev.length){
@@ -392,7 +394,6 @@ let cutWidth=.62,simSpeed=12,running=true,worlds=[],simObjects=[];
 function addSim(o){o.userData.sim=true;scene.add(o);simObjects.push(o);return o}
 function clearSim(){for(const o of simObjects)scene.remove(o);simObjects=[]}
 
-
 function makeGrassField(poly,offset){
   const A=areaPoly(poly),count=Math.min(4200,Math.max(1400,Math.floor(A*31)));
   const geom=new THREE.PlaneGeometry(.040,.36);geom.translate(0,.18,0);
@@ -403,24 +404,31 @@ function makeGrassField(poly,offset){
   const freshA=new THREE.Color(0x367f3e),freshB=new THREE.Color(0x58a34f);
   const key=(gx,gy)=>gx+','+gy;
   for(let i=0;i<count;i++){
-    const p=randomPoint(poly,.03),x=p[0],y=p[1],angle=Math.random()*Math.PI,h=.23+Math.random()*.20,sx=.72+Math.random()*.65,lean=(Math.random()-.5)*.17;
+    let p=randomPoint(poly,.03),x=p[0],y=p[1];
+    const angle=Math.random()*Math.PI, h=.23+Math.random()*.20, sx=.72+Math.random()*.65;
+    const lean=(Math.random()-.5)*.17;
     data.push({x,y,angle,h,sx,lean,cut:false});
-    dummy.position.set(offset+x,.012,y);dummy.rotation.set(lean,angle,(Math.random()-.5)*.08);dummy.scale.set(sx,h/.36,1);dummy.updateMatrix();mesh.setMatrixAt(i,dummy.matrix);
-    mesh.setColorAt(i,freshA.clone().lerp(freshB,Math.random()));
+    dummy.position.set(offset+x,.012,y);dummy.rotation.set(lean,angle,(Math.random()-.5)*.08);dummy.scale.set(sx,h/.36,1);dummy.updateMatrix();
+    mesh.setMatrixAt(i,dummy.matrix);
+    const c=freshA.clone().lerp(freshB,Math.random());mesh.setColorAt(i,c);
     const gx=Math.floor(x/cell),gy=Math.floor(y/cell),k=key(gx,gy);if(!buckets.has(k))buckets.set(k,[]);buckets.get(k).push(i);
   }
   mesh.instanceMatrix.needsUpdate=true;if(mesh.instanceColor)mesh.instanceColor.needsUpdate=true;addSim(mesh);
   return{mesh,data,buckets,cell,offset,dummy,key};
 }
+
 function cutGrassField(field,x,y,r){
   if(!field)return;
   const {mesh,data,buckets,cell,offset,dummy,key}=field,r2=r*r;
   const gx0=Math.floor((x-r)/cell),gx1=Math.floor((x+r)/cell),gy0=Math.floor((y-r)/cell),gy1=Math.floor((y+r)/cell);
-  let changed=false;const cutA=new THREE.Color(0x63a954),cutB=new THREE.Color(0x82ba68);
+  let changed=false;
+  const cutA=new THREE.Color(0x63a954),cutB=new THREE.Color(0x82ba68);
   for(let gy=gy0;gy<=gy1;gy++)for(let gx=gx0;gx<=gx1;gx++){
     const ids=buckets.get(key(gx,gy));if(!ids)continue;
     for(const i of ids){const d=data[i];if(d.cut)continue;const dx=d.x-x,dy=d.y-y;if(dx*dx+dy*dy>r2)continue;
-      d.cut=true;const h=.075+Math.random()*.035;dummy.position.set(offset+d.x,.012,d.y);dummy.rotation.set(d.lean*.25,d.angle,0);dummy.scale.set(d.sx*.95,h/.36,1);dummy.updateMatrix();mesh.setMatrixAt(i,dummy.matrix);mesh.setColorAt(i,cutA.clone().lerp(cutB,Math.random()));changed=true;
+      d.cut=true;const h=.075+Math.random()*.035;
+      dummy.position.set(offset+d.x,.012,d.y);dummy.rotation.set(d.lean*.25,d.angle,0);dummy.scale.set(d.sx*.95,h/.36,1);dummy.updateMatrix();mesh.setMatrixAt(i,dummy.matrix);
+      mesh.setColorAt(i,cutA.clone().lerp(cutB,Math.random()));changed=true;
     }
   }
   if(changed){mesh.instanceMatrix.needsUpdate=true;if(mesh.instanceColor)mesh.instanceColor.needsUpdate=true}
@@ -430,13 +438,16 @@ function createWorld(poly,offset,kind){
   const lawn=makeLawnTexture(poly),b=lawn.b;
   const plane=new THREE.Mesh(new THREE.PlaneGeometry(lawn.w,lawn.h),new THREE.MeshStandardMaterial({map:lawn.tex,transparent:true,alphaTest:.05,roughness:1}));
   plane.rotation.x=-Math.PI/2;plane.position.set(offset+(b.minX+b.maxX)/2,.005,(b.minY+b.maxY)/2);plane.receiveShadow=true;addSim(plane);
+
   const pts=poly.map(([x,y])=>new THREE.Vector3(offset+x,.03,y));pts.push(pts[0].clone());
   const border=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:0x91a196,transparent:true,opacity:.55}));addSim(border);
+
   const grass=makeGrassField(poly,offset);
 
   const dp=dockPoint(poly),dock=makeDock();dock.position.set(offset+dp[0],0,dp[1]);dock.rotation.y=Math.PI;addSim(dock);
   const mower=mowerMesh(kind);addSim(mower);
   const start=kind==='smart'?dp:randomPoint(poly,.5);
+
   let route=[];
   if(kind==='smart'){
     const mowing=smartRoute(poly,cutWidth);
@@ -447,6 +458,7 @@ function createWorld(poly,offset,kind){
       for(const q of bfsPath(last,dp,poly,.45))route.push({p:q,mow:false});
     }
   }
+
   const w={poly,offset,kind,lawn,grass,mower,dockPos:dp,x:start[0],y:start[1],heading:0,speed:kind==='smart'?.48:.43,turnRate:kind==='smart'?1.55:1.35,
     bodyR:.46,distance:0,elapsed:0,energy:0,batteryWh:kind==='smart'?82:70,battery:1,chargeCount:0,state:'work',reverseLeft:0,turnLeft:0,
     route,routeIndex:0,routeMow:true,returnRoute:[],returnIndex:0,resume:null,covered:0,texTick:0,done:false};
