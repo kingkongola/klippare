@@ -1,0 +1,335 @@
+// v30: MCU-realistic planner + wheel/gyro fusion.
+// Still no GPS, camera, lidar or hidden geometry in the learned planner.
+
+const DR_CRUISE_CANDIDATES=[0,-.35,.35,-.70,.70,-1.05,1.05];
+
+configureEstimator = function(w,{start,heading,profile,useMotor}){
+  w.x=start[0];w.y=start[1];w.heading=heading;
+  w.useMotor=useMotor;
+  w.drOrigin={x:start[0],y:start[1],heading};
+  w.learn=Core.createEstimator({x:0,y:0,heading:0,profile:{...profile},useMotor});
+  w.sensorRng=Core.mulberry32((profile.seed^0x71c3a55a)>>>0);
+  w.motorRng=Core.mulberry32((profile.seed^0x2f6e2b1d)>>>0);
+  w.worldRng=Core.mulberry32((profile.seed^0xb5297a4d)>>>0);
+  w.replanLeft=1.2+w.worldRng()*.7;
+  updateMower(w);
+};
+
+function sensorGaussian(w){return Core.gaussian(w.sensorRng)}
+
+function integrateSensors(w,ds,trueDtheta,dt){
+  if(!w.learn)return null;
+  const p=w.learn.profile,b=p.wheelBase;
+  const leftGround=ds-b*trueDtheta/2,rightGround=ds+b*trueDtheta/2;
+  let left=leftGround*(p.leftScale??1)+Math.abs(leftGround)*(p.slipSigma??0)*sensorGaussian(w);
+  let right=rightGround*(p.rightScale??1)+Math.abs(rightGround)*(p.slipSigma??0)*sensorGaussian(w);
+
+  const wheelTravel=Math.abs(leftGround)+Math.abs(rightGround);
+  const chance=Math.min(.10,.003+(p.driftPct||0)*.006)*Math.min(1.5,wheelTravel/.18);
+  if(w.sensorRng()<chance){
+    const both=w.sensorRng()<.12;
+    const extra=.18+.72*w.sensorRng();
+    if(both||w.sensorRng()<.5)left+=Math.sign(leftGround||ds||1)*Math.max(.015,Math.abs(leftGround)*extra);
+    if(both||w.sensorRng()>=.5)right+=Math.sign(rightGround||ds||1)*Math.max(.015,Math.abs(rightGround)*extra);
+  }
+
+  const t=Math.max(.02,dt||.1);
+  const gyro=trueDtheta+(p.gyroBias||0)*t+(p.gyroNoise||0)*Math.sqrt(t)*sensorGaussian(w);
+  return Core.integrateMeasuredWheelGyro(w.learn,left,right,gyro,{
+    gyroWeight:.78,slipGyroWeight:.96,slipThreshold:.055
+  });
+}
+
+sampleMotorCurrent = function(w){
+  const fresh=w.lawn.sampleUncut(w.x,w.y,cutWidth*.48);
+  const density=grassDensity(w.x,w.y),mode=grassSignalMode();
+  const heightFactor=mode==='short'?.16:1;
+  const r=w.motorRng||Math.random;
+  const noise=(r()-.5)*(mode==='short'?.22:.16);
+  return Math.max(1.05,1.25+3.8*fresh*density*heightFactor+noise);
+};
+
+adaptiveObserve = function(w,current){
+  if(!w.learn)return;
+  const norm=Math.max(0,Math.min(1,(current-1.25)/4.0));
+  if(w.useMotor)Core.correctPoseFromMotor(w.learn,norm,{
+    radiusCells:1,gain:.16,minImprovement:.11,shiftPenalty:.11
+  });
+  Core.observePass(w.learn,w.useMotor?norm:0);
+};
+
+updateOdometry = function(w,dx,dy){
+  if(!w.learn)return;
+  const ds=Math.hypot(dx,dy)*(dx*Math.cos(w.heading)+dy*Math.sin(w.heading)<0?-1:1);
+  integrateSensors(w,ds,0,.1);
+};
+
+updateOdometryTurn = function(w,dtheta){
+  if(w.learn)integrateSensors(w,0,dtheta,Math.max(.05,Math.abs(dtheta)/2.4));
+};
+
+chooseAdaptiveTurn = function(w){
+  if(!w.learn)return(Math.random()<.5?-1:1)*(1.05+Math.random()*1.8);
+  return Core.chooseTurn(w.learn,DR_TURN_CANDIDATES,{
+    exploration:.10,random:w.worldRng||w.learn.rng,turnPenalty:.08,
+    scoreOptions:{maxDistance:4.2,step:.36,motorWeight:.55}
+  });
+};
+
+function chooseCruiseTurn(w){
+  if(!w.learn)return 0;
+  return Core.chooseTurn(w.learn,DR_CRUISE_CANDIDATES,{
+    exploration:.035,random:w.worldRng||w.learn.rng,turnPenalty:.38,
+    scoreOptions:{maxDistance:4.6,step:.36,motorWeight:.62}
+  });
+}
+
+stepRandom = function(w,dt){
+  if(w.state==='charge'){
+    w.elapsed+=dt;
+    w.battery=Math.min(1,w.battery+120*dt/3600/w.batteryWh);
+    if(w.battery>=.96){
+      w.chargeCount++;w.state='resume';
+      w.returnRoute=bfsPath(w.dockPos,[w.resume.x,w.resume.y],w.poly,.28,w.bodyR)||[];
+      w.returnIndex=0
+    }
+    return
+  }
+  if(w.state==='return'||w.state==='resume'){
+    const done=followPoints(w,w.returnRoute,'returnIndex',dt,false);
+    w.elapsed+=dt;
+    if(done){
+      if(w.state==='return'){w.state='charge';w.battery=Math.max(w.battery,.01)}
+      else{w.state='drive';w.heading=w.resume.heading}
+    }
+    return
+  }
+  if(w.battery<.14){startReturn(w);return}
+  w.elapsed+=dt;
+
+  const rr=w.kind==='adaptive'?(w.worldRng||Math.random):Math.random;
+
+  if(w.state==='reverse'){
+    const mv=Math.min(.18*dt,w.reverseLeft);
+    const nx=w.x-Math.cos(w.heading)*mv,ny=w.y-Math.sin(w.heading)*mv;
+    if(safeAt(nx,ny,w.poly,w.bodyR)){
+      w.x=nx;w.y=ny;
+      if(w.kind==='adaptive')integrateSensors(w,-mv,0,dt);
+      w.distance+=mv;w.reverseLeft-=mv;useEnergy(w,44,dt)
+    }else w.reverseLeft=0;
+    if(w.reverseLeft<=0){
+      if(w.kind==='adaptive')w.turnLeft=chooseAdaptiveTurn(w);
+      w.state='turn'
+    }
+    return
+  }
+
+  if(w.state==='turn'){
+    const da=Math.sign(w.turnLeft)*Math.min(Math.abs(w.turnLeft),w.turnRate*dt);
+    w.heading+=da;w.turnLeft-=da;
+    if(w.kind==='adaptive')integrateSensors(w,0,da,dt);
+    useEnergy(w,36,dt);
+    if(Math.abs(w.turnLeft)<.02){w.state='drive';w.replanLeft=.9+rr()*.9}
+    return
+  }
+
+  const dNoise=(rr()-.5)*.012*dt;
+  w.heading+=dNoise;
+  const mv=w.speed*dt,nx=w.x+Math.cos(w.heading)*mv,ny=w.y+Math.sin(w.heading)*mv;
+  if(!safeAt(nx,ny,w.poly,w.bodyR)){
+    if(w.kind==='adaptive')observeLearnedBoundary(w);
+    w.state='reverse';
+    w.reverseLeft=.18+.12*rr();
+    w.turnLeft=w.kind==='adaptive'?0:(rr()<.5?-1:1)*(1.15+rr()*1.55);
+    return
+  }
+
+  w.x=nx;w.y=ny;
+  if(w.kind==='adaptive')integrateSensors(w,mv,dNoise,dt);
+  w.distance+=mv;useEnergy(w,52,dt);markCut(w,dt,true);
+
+  if(w.kind==='adaptive'){
+    w.replanLeft-=mv;
+    if(w.replanLeft<=0){
+      const a=chooseCruiseTurn(w);
+      w.replanLeft=1.1+rr()*.9;
+      if(Math.abs(a)>.12){w.turnLeft=a;w.state='turn'}
+    }
+  }
+};
+
+const oldUpdateStatsV30=updateStats;
+updateStats = function(){
+  oldUpdateStatsV30();
+  const m=worlds[1],a=worlds[2];
+  if(!m||!a)return;
+  const fmt=x=>x.toFixed(1).replace('.',',');
+  const me=document.getElementById('mExtra'),ae=document.getElementById('aExtra');
+  if(me&&m.learn)me.textContent=`positionsfel ${fmt(estimatorError(m))} m · slirflaggor ${m.learn.slipEvents}`;
+  if(ae&&a.learn)ae.textContent=`positionsfel ${fmt(estimatorError(a))} m · slir ${a.learn.slipEvents} · kartkorr ${a.learn.poseCorrections}`;
+};
+
+monteCarlo = async function(trials=100){
+  mc.innerHTML='<div class="mc-summary"><strong>Kör 100 jämförbara försök…</strong><br>Gyro + hjul fusion, riktiga slirhändelser och aktiv frontier-planering ingår.</div>';
+  await new Promise(r=>setTimeout(r,20));
+
+  const poly=SHAPES[shape.value],b=bounds(poly);
+  const N=74,W=N,H=Math.max(30,Math.round(N*(b.maxY-b.minY)/(b.maxX-b.minX)));
+  const dx=(b.maxX-b.minX)/W,dy=(b.maxY-b.minY)/H;
+  const cells=[],cellAt=new Int32Array(W*H);cellAt.fill(-1);
+  for(let iy=0;iy<H;iy++)for(let ix=0;ix<W;ix++){
+    const x=b.minX+(ix+.5)*dx,y=b.minY+(iy+.5)*dy;
+    if(pointInPoly(x,y,poly)){cellAt[iy*W+ix]=cells.length;cells.push([x,y])}
+  }
+  const safeStarts=cells.filter(([x,y])=>safeAt(x,y,poly,.46));
+  const need=Math.ceil(.95*cells.length),radius=cutWidth/2,r2=radius*radius;
+  const maxDist=areaPoly(poly)/cutWidth*15;
+  const drift=+(document.getElementById('drift')?.value||2),mode=grassSignalMode();
+
+  function visitAround(cut,x,y,doCut=true){
+    const cx=Math.floor((x-b.minX)/dx),cy=Math.floor((y-b.minY)/dy);
+    const rx=Math.ceil(radius/dx),ry=Math.ceil(radius/dy);
+    let added=0,total=0,uncut=0;
+    for(let gy=Math.max(0,cy-ry);gy<=Math.min(H-1,cy+ry);gy++)for(let gx=Math.max(0,cx-rx);gx<=Math.min(W-1,cx+rx);gx++){
+      const ci=cellAt[gy*W+gx];if(ci<0)continue;
+      const ddx=cells[ci][0]-x,ddy=cells[ci][1]-y;
+      if(ddx*ddx+ddy*ddy>r2)continue;
+      total++;if(!cut[ci])uncut++;
+      if(doCut&&!cut[ci]){cut[ci]=1;added++}
+    }
+    return{added,fresh:total?uncut/total:0};
+  }
+
+  function currentAt(cut,x,y,rng){
+    const fresh=visitAround(cut,x,y,false).fresh;
+    const density=mode==='patchy'?Math.max(.65,Math.min(1.25,.91+.13*Math.sin(x*.73+y*.27)+.10*Math.cos(y*.59-x*.31))):.96;
+    const height=mode==='short'?.16:1,noise=(rng()-.5)*(mode==='short'?.22:.16);
+    return Math.max(1.05,1.25+3.8*fresh*density*height+noise);
+  }
+
+  function reactive(kind,start,heading,seed,profile){
+    const worldRng=Core.mulberry32((seed^0xb5297a4d)>>>0);
+    const sensorRng=Core.mulberry32((seed^0x71c3a55a)>>>0);
+    const motorRng=Core.mulberry32((seed^0x2f6e2b1d)>>>0);
+    const cut=new Uint8Array(cells.length);
+    let x=start[0],y=start[1],h=heading,dist=0,count=0,replan=1.2+worldRng()*.7;
+    const useMemory=kind!=='random',useMotor=kind==='motor';
+    const est=useMemory?Core.createEstimator({x:0,y:0,heading:0,profile:{...profile},useMotor}):null;
+
+    function gauss(){return Core.gaussian(sensorRng)}
+    function sensors(ds,dtheta,dt=.12){
+      if(!est)return;
+      const p=est.profile,wb=p.wheelBase;
+      const lg=ds-wb*dtheta/2,rg=ds+wb*dtheta/2;
+      let l=lg*(p.leftScale??1)+Math.abs(lg)*(p.slipSigma??0)*gauss();
+      let r=rg*(p.rightScale??1)+Math.abs(rg)*(p.slipSigma??0)*gauss();
+      const travel=Math.abs(lg)+Math.abs(rg);
+      const chance=Math.min(.10,.003+(p.driftPct||0)*.006)*Math.min(1.5,travel/.18);
+      if(sensorRng()<chance){
+        const both=sensorRng()<.12,extra=.18+.72*sensorRng();
+        const leftFirst=sensorRng()<.5;
+        if(both||leftFirst)l+=Math.sign(lg||ds||1)*Math.max(.015,Math.abs(lg)*extra);
+        if(both||!leftFirst)r+=Math.sign(rg||ds||1)*Math.max(.015,Math.abs(rg)*extra);
+      }
+      const t=Math.max(.02,dt);
+      const gyro=dtheta+(p.gyroBias||0)*t+(p.gyroNoise||0)*Math.sqrt(t)*gauss();
+      Core.integrateMeasuredWheelGyro(est,l,r,gyro,{gyroWeight:.78,slipGyroWeight:.96,slipThreshold:.055});
+    }
+
+    while(count<need&&dist<maxDist){
+      const dNoise=(worldRng()-.5)*.004;h+=dNoise;
+      const step=.18,nx=x+Math.cos(h)*step,ny=y+Math.sin(h)*step;
+      if(!safeAt(nx,ny,poly,.46)){
+        if(est)Core.observeBoundary(est,.46);
+        const back=.24,bx=x-Math.cos(h)*back,by=y-Math.sin(h)*back;
+        if(safeAt(bx,by,poly,.46)){x=bx;y=by;dist+=back;sensors(-back,0,.18)}
+        let turn;
+        if(est){
+          turn=Core.chooseTurn(est,DR_TURN_CANDIDATES,{exploration:.10,random:worldRng,turnPenalty:.08,scoreOptions:{maxDistance:4.2,step:.36,motorWeight:.55}});
+          sensors(0,turn,Math.max(.08,Math.abs(turn)/2.4));
+          replan=.9+worldRng()*.9;
+        }else turn=(worldRng()<.5?-1:1)*(1.15+worldRng()*1.55);
+        h+=turn;continue;
+      }
+
+      x=nx;y=ny;dist+=step;sensors(step,dNoise,.12);
+      const amps=currentAt(cut,x,y,motorRng),norm=Math.max(0,Math.min(1,(amps-1.25)/4));
+      if(est&&useMotor)Core.correctPoseFromMotor(est,norm,{radiusCells:1,gain:.16,minImprovement:.11,shiftPenalty:.11});
+      const v=visitAround(cut,x,y,true);count+=v.added;
+      if(est)Core.observePass(est,useMotor?norm:0);
+
+      if(est){
+        replan-=step;
+        if(replan<=0){
+          const turn=Core.chooseTurn(est,DR_CRUISE_CANDIDATES,{exploration:.035,random:worldRng,turnPenalty:.38,scoreOptions:{maxDistance:4.6,step:.36,motorWeight:.62}});
+          replan=1.1+worldRng()*.9;
+          if(Math.abs(turn)>.12){h+=turn;sensors(0,turn,Math.max(.08,Math.abs(turn)/2.4))}
+        }
+      }
+    }
+    return{distance:dist,reached:count>=need,slips:est?.slipEvents||0,corrections:est?.poseCorrections||0};
+  }
+
+  function planned95(start){
+    const mowing=smartRoute(poly,cutWidth,start);
+    if(!mowing.length)return{distance:maxDist,reached:false};
+    const route=[],outbound=bfsPath(start,mowing[0].p,poly,.28,MOWER_CLEARANCE);
+    if(outbound)for(const q of outbound)route.push({p:q,mow:false});
+    route.push(...mowing);
+    const cut=new Uint8Array(cells.length);let prev=start,dist=0,count=0;
+    for(const target of route){
+      const p=target.p,seg=Math.hypot(p[0]-prev[0],p[1]-prev[1]),n=Math.max(1,Math.ceil(seg/.14));
+      for(let i=1;i<=n;i++){
+        const t=i/n,x=prev[0]+(p[0]-prev[0])*t,y=prev[1]+(p[1]-prev[1])*t;dist+=seg/n;
+        if(target.mow){const v=visitAround(cut,x,y,true);count+=v.added}
+        if(count>=need)return{distance:dist,reached:true};
+      }
+      prev=p;
+    }
+    return{distance:dist,reached:count>=need};
+  }
+
+  const runs=[];
+  for(let t=0;t<trials;t++){
+    const baseSeed=(0x9e3779b9^(t*2654435761))>>>0,rng=Core.mulberry32(baseSeed);
+    const start=safeStarts[Math.floor(rng()*safeStarts.length)],heading=rng()*Math.PI*2;
+    const profile=Core.makeProfile({driftPct:drift,seed:(baseSeed^0xa5a5a5a5)>>>0,wheelBase:.48});
+    runs.push({
+      random:reactive('random',start,heading,(baseSeed^0x11111111)>>>0,profile),
+      memory:reactive('memory',start,heading,(baseSeed^0x22222222)>>>0,profile),
+      motor:reactive('motor',start,heading,(baseSeed^0x22222222)>>>0,profile),
+      smart:planned95(start)
+    });
+    if((t+1)%5===0||t===0){mc.innerHTML=`<div class="mc-summary"><strong>Kör försök ${t+1} av ${trials}…</strong><br>Varje robot stoppas när 95 % är klippt.</div>`;await new Promise(r=>setTimeout(r,0))}
+  }
+
+  function quantile(xs,p){if(!xs.length)return NaN;return xs[Math.max(0,Math.min(xs.length-1,Math.floor((xs.length-1)*p)))]}
+  function summary(key){
+    const vals=runs.map(r=>r[key]),success=vals.filter(v=>v.reached).map(v=>v.distance).sort((a,b)=>a-b);
+    return{success:success.length,rate:success.length/trials,med:quantile(success,.5),q10:quantile(success,.1),q90:quantile(success,.9)}
+  }
+  const R=summary('random'),M=summary('memory'),A=summary('motor'),S=summary('smart');
+  const fmt=v=>Number.isFinite(v)?`${Math.round(v)} m`:'–',range=x=>Number.isFinite(x.q10)?`${Math.round(x.q10)}–${Math.round(x.q90)} m`:'–',success=x=>`${x.success}/${trials}`;
+  const pctShorter=(base,x)=>Number.isFinite(base.med)&&Number.isFinite(x.med)?100*(base.med-x.med)/base.med:NaN;
+  const vsRandom=x=>{const g=pctShorter(R,x);return!Number.isFinite(g)?'–':g>=0?`${Math.round(g)} % kortare`:`${Math.round(-g)} % längre`};
+  const motorGain=pctShorter(M,A),memGain=pctShorter(R,M);
+  let takeaway='';
+  if(Number.isFinite(memGain)&&Number.isFinite(motorGain)){
+    takeaway=`<strong>Huvudresultat:</strong> aktiv DR + minne är ${Math.abs(Math.round(memGain))} % ${memGain>=0?'kortare':'längre'} än slump. `;
+    if(motorGain>2)takeaway+=`Klippmotor-signalen ger ytterligare <strong>${Math.round(motorGain)} % kortare</strong> körning än samma planner utan den.`;
+    else if(motorGain<-2)takeaway+=`Klippmotor-signalen gör här modellen <strong>${Math.round(-motorGain)} % sämre</strong>.`;
+    else takeaway+='Klippmotor-signalen ger här <strong>nästan ingen extra vinst</strong>.';
+  }
+  const avg=(key,field)=>runs.reduce((s,r)=>s+(r[key][field]||0),0)/runs.length;
+
+  mc.innerHTML=`
+    <p class="mc-summary"><strong>${trials} oberoende försök, mål: 95 % klippt.</strong><br>Alla icke-RTK-modeller möter simulerad hjulslirning. DR-modellerna fusionerar hjul med gyro och planerar aktivt mot glest besökta kartceller.</p>
+    <table class="mc-table"><thead><tr><th>Strategi</th><th>Typiskt till 95 %</th><th>Jämfört med slump</th><th>80 % av körningarna</th><th>Nådde 95 %</th></tr></thead><tbody>
+      <tr><td>1. Ren slump</td><td><strong>${fmt(R.med)}</strong></td><td>referens</td><td>${range(R)}</td><td>${success(R)}</td></tr>
+      <tr><td>2. DR + gyro + minne</td><td><strong>${fmt(M.med)}</strong></td><td class="${pctShorter(R,M)>0?'mc-win':''}">${vsRandom(M)}</td><td>${range(M)}</td><td>${success(M)}</td></tr>
+      <tr><td>3. + klippmotor</td><td><strong>${fmt(A.med)}</strong></td><td class="${pctShorter(R,A)>0?'mc-win':''}">${vsRandom(A)}</td><td>${range(A)}</td><td>${success(A)}</td></tr>
+      <tr><td>4. Kartlagd / RTK</td><td><strong>${fmt(S.med)}</strong></td><td class="${pctShorter(R,S)>0?'mc-win':''}">${vsRandom(S)}</td><td>${range(S)}</td><td>${success(S)}</td></tr>
+    </tbody></table>
+    <p class="mc-summary">${takeaway}</p>
+    <div class="mc-note">Modell 2/3 får samma start, gyro- och hjulprofil. I snitt flaggades ${avg('memory','slips').toFixed(1)} misstänkta slirhändelser per DR-körning; motorvarianten gjorde ${avg('motor','corrections').toFixed(1)} billiga 3×3-kartkorrigeringar. Gyrot korrigerar rotation — lika slirning på båda hjulen kan fortfarande ge fel körsträcka och är medvetet inte “magiskt löst”.</div>`;
+};
