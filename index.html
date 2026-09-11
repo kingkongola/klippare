@@ -11,7 +11,7 @@
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/"}}</script>
 </head>
 <body>
-<header><div class="wrap"><div class="eyebrow">Ett onödigt seriöst experiment om robotgräsklippare</div><h1>Tre robotar. Samma gräsmatta.</h1><p class="lead">Ren slump, en billig studsare som lär sig av klippmotorn och en kartlagd RTK-klippare. Kör dem samtidigt.</p><div class="hero-note">Version 24 · tre robotar parallellt</div></div></header>
+<header><div class="wrap"><div class="eyebrow">Ett onödigt seriöst experiment om robotgräsklippare</div><h1>Tre robotar. Samma gräsmatta.</h1><p class="lead">Ren slump, en billig studsare som lär sig av klippmotorn och en kartlagd RTK-klippare. Kör dem samtidigt.</p><div class="hero-note">Version 26 · tre robotar parallellt</div></div></header>
 <main><section><div class="wrap"><div class="demo"><div class="demo-head"><strong>Live-simulering</strong><div class="legend"><span><i class="dot" style="background:var(--random)"></i>slump</span><span><i class="dot" style="background:var(--adaptive)"></i>ström-lärande</span><span><i class="dot" style="background:var(--smart)"></i>kartlagd/RTK</span></div></div>
 <div class="controls"><div class="control"><label>Gräsmatta</label><select id="shape"><option value="square">Kvadrat</option><option value="circle">Cirkel</option><option value="long">Långsmal</option><option value="L">L-form</option><option value="H" selected>Två områden + smal passage</option></select></div><div class="control"><label>Hastighet: <span id="speedVal">12×</span></label><input id="speed" type="range" min="1" max="60" value="12"></div><div class="control"><label>Klippbredd: <span id="widthVal">0,62 m</span></label><input id="width" type="range" min=".4" max="1.0" step=".02" value=".62"></div><div class="buttons"><button id="toggle">Paus</button><button id="reset">Starta om</button></div></div>
 <div id="stage"></div>
@@ -22,5 +22,5 @@
 </div><div class="mc"><button id="mcBtn">Monte Carlo: slump mot kartlagd</button><div id="mc"></div></div></div><div class="hidden-compat"><select id="leftMode"><option value="random" selected>random</option></select><span id="rName"></span><span id="rMotor"></span></div></div></section>
 <section><div class="wrap"><div class="eyebrow">Kortversionen</div><h2>Dubbelklippning kostar</h2><div class="explain"><div class="card"><p>Den teoretiska drömgränsen är area delat med klippbredd.</p><div class="formula">L<sub>ideal</sub> = A / b</div></div><div class="card"><p>Med ren slump blir de sista procenten snabbt dyra.</p><div class="formula">q ≈ 1 − exp(−bL/A)</div></div></div><div class="callout"><strong>Formen spelar roll:</strong> smala passager och uppdelade ytor är särskilt jobbiga för en studsare.</div></div></section></main>
 <footer><div class="wrap">Geometri- och algoritmexperiment, inte ett produkttest.</div></footer>
-<script type="module" src="loader.js?v=24"></script>
+<script type="module" src="loader.js?v=26"></script>
 </body></html>
