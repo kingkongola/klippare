@@ -3,7 +3,7 @@ import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
 
 const sources = await Promise.all(
   ['engine-1.txt','engine-2.txt','engine-3.txt','engine-4.txt'].map(async p => {
-    const r = await fetch(`${p}?v=26`, { cache: 'no-store' });
+    const r = await fetch(`${p}?v=27`, { cache: 'no-store' });
     if (!r.ok) throw new Error(`Kunde inte ladda ${p}`);
     return r.text();
   })
