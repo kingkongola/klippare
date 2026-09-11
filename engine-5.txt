@@ -246,6 +246,196 @@ updateStats = function(){
     : `unik/svept ${Math.round(100*eff(s))}% · laddningar ${s.chargeCount}`;
 };
 
+monteCarlo = async function(trials=100){
+  mc.innerHTML='<div class="mc-summary"><strong>Kör 100 jämförbara försök…</strong><br>Varje försök startar med en ny, oklippt gräsmatta. Vi mäter meter tills 95 % är klippt.</div>';
+  await new Promise(r=>setTimeout(r,20));
+
+  const poly=SHAPES[shape.value],b=bounds(poly);
+  const N=74,W=N,H=Math.max(30,Math.round(N*(b.maxY-b.minY)/(b.maxX-b.minX)));
+  const dx=(b.maxX-b.minX)/W,dy=(b.maxY-b.minY)/H;
+  const cells=[],cellAt=new Int32Array(W*H);cellAt.fill(-1);
+  for(let iy=0;iy<H;iy++)for(let ix=0;ix<W;ix++){
+    const x=b.minX+(ix+.5)*dx,y=b.minY+(iy+.5)*dy;
+    if(pointInPoly(x,y,poly)){cellAt[iy*W+ix]=cells.length;cells.push([x,y])}
+  }
+  const safeStarts=cells.filter(([x,y])=>safeAt(x,y,poly,.46));
+  const need=Math.ceil(.95*cells.length),radius=cutWidth/2,r2=radius*radius;
+  const maxDist=areaPoly(poly)/cutWidth*15;
+  const drift=+(document.getElementById('drift')?.value||2);
+  const mode=grassSignalMode();
+
+  function visitAround(cut,x,y,doCut=true){
+    const cx=Math.floor((x-b.minX)/dx),cy=Math.floor((y-b.minY)/dy);
+    const rx=Math.ceil(radius/dx),ry=Math.ceil(radius/dy);
+    let added=0,total=0,uncut=0;
+    for(let gy=Math.max(0,cy-ry);gy<=Math.min(H-1,cy+ry);gy++)for(let gx=Math.max(0,cx-rx);gx<=Math.min(W-1,cx+rx);gx++){
+      const ci=cellAt[gy*W+gx];if(ci<0)continue;
+      const ddx=cells[ci][0]-x,ddy=cells[ci][1]-y;
+      if(ddx*ddx+ddy*ddy>r2)continue;
+      total++;if(!cut[ci])uncut++;
+      if(doCut&&!cut[ci]){cut[ci]=1;added++}
+    }
+    return{added,fresh:total?uncut/total:0};
+  }
+
+  function currentAt(cut,x,y,rng){
+    const fresh=visitAround(cut,x,y,false).fresh;
+    const density=mode==='patchy'
+      ? Math.max(.65,Math.min(1.25,.91+.13*Math.sin(x*.73+y*.27)+.10*Math.cos(y*.59-x*.31)))
+      : .96;
+    const height=mode==='short'?.16:1;
+    const noise=(rng()-.5)*(mode==='short'?.22:.16);
+    return Math.max(1.05,1.25+3.8*fresh*density*height+noise);
+  }
+
+  function reactive(kind,start,heading,seed,profile){
+    const rng=Core.mulberry32(seed);
+    const cut=new Uint8Array(cells.length);
+    let x=start[0],y=start[1],h=heading,dist=0,count=0;
+    const useMemory=kind!=='random',useMotor=kind==='motor';
+    const est=useMemory?Core.createEstimator({x:0,y:0,heading:0,profile:{...profile},useMotor}):null;
+
+    while(count<need&&dist<maxDist){
+      // Small unobserved physical heading disturbance.
+      h+=(rng()-.5)*.004;
+      const step=.18,nx=x+Math.cos(h)*step,ny=y+Math.sin(h)*step;
+      // True geometry is consulted only for the next physical movement: this
+      // represents actually reaching the boundary, never lookahead planning.
+      if(!safeAt(nx,ny,poly,.46)){
+        if(est)Core.observeBoundary(est,.46);
+        const back=.24,bx=x-Math.cos(h)*back,by=y-Math.sin(h)*back;
+        if(safeAt(bx,by,poly,.46)){
+          x=bx;y=by;dist+=back;
+          if(est)Core.integrateTrueWheelMotion(est,-back,-back);
+        }
+        let turn;
+        if(est){
+          turn=Core.chooseTurn(est,DR_TURN_CANDIDATES,{
+            exploration:.14,random:est.rng,
+            scoreOptions:{maxDistance:4.2,step:.36,motorWeight:.55}
+          });
+          const wb=est.profile.wheelBase;
+          Core.integrateTrueWheelMotion(est,-wb*turn/2,wb*turn/2);
+        }else{
+          turn=(rng()<.5?-1:1)*(1.15+rng()*1.55);
+        }
+        h+=turn;
+        continue;
+      }
+      x=nx;y=ny;dist+=step;
+      if(est)Core.integrateTrueWheelMotion(est,step,step);
+
+      // Both DR variants take the same local physical sample so their random
+      // streams stay paired. Only the motor variant is allowed to use it.
+      const amps=currentAt(cut,x,y,rng);
+      const v=visitAround(cut,x,y,true);count+=v.added;
+      if(est)Core.observePass(est,useMotor?Math.max(0,Math.min(1,(amps-1.25)/4)):0);
+    }
+    return{distance:dist,reached:count>=need};
+  }
+
+  function planned95(start){
+    const mowing=smartRoute(poly,cutWidth,start);
+    if(!mowing.length)return{distance:maxDist,reached:false};
+    const route=[];
+    const outbound=bfsPath(start,mowing[0].p,poly,.28,MOWER_CLEARANCE);
+    if(outbound)for(const q of outbound)route.push({p:q,mow:false});
+    route.push(...mowing);
+    const cut=new Uint8Array(cells.length);
+    let prev=start,dist=0,count=0;
+    for(const target of route){
+      const p=target.p,seg=Math.hypot(p[0]-prev[0],p[1]-prev[1]);
+      const n=Math.max(1,Math.ceil(seg/.14));
+      for(let i=1;i<=n;i++){
+        const t=i/n,x=prev[0]+(p[0]-prev[0])*t,y=prev[1]+(p[1]-prev[1])*t;
+        dist+=seg/n;
+        if(target.mow){const v=visitAround(cut,x,y,true);count+=v.added}
+        if(count>=need)return{distance:dist,reached:true};
+      }
+      prev=p;
+    }
+    return{distance:dist,reached:count>=need};
+  }
+
+  const runs=[];
+  for(let t=0;t<trials;t++){
+    const baseSeed=(0x9e3779b9^(t*2654435761))>>>0;
+    const rng=Core.mulberry32(baseSeed);
+    const start=safeStarts[Math.floor(rng()*safeStarts.length)];
+    const heading=rng()*Math.PI*2;
+    const profile=Core.makeProfile({driftPct:drift,seed:(baseSeed^0xa5a5a5a5)>>>0,wheelBase:.48});
+    runs.push({
+      random:reactive('random',start,heading,(baseSeed^0x11111111)>>>0,profile),
+      memory:reactive('memory',start,heading,(baseSeed^0x22222222)>>>0,profile),
+      motor:reactive('motor',start,heading,(baseSeed^0x22222222)>>>0,profile),
+      smart:planned95(start)
+    });
+    if((t+1)%5===0||t===0){
+      mc.innerHTML=`<div class="mc-summary"><strong>Kör försök ${t+1} av ${trials}…</strong><br>Varje robot stoppas när 95 % av gräset är klippt.</div>`;
+      await new Promise(r=>setTimeout(r,0));
+    }
+  }
+
+  function quantile(xs,p){
+    if(!xs.length)return NaN;
+    const i=Math.max(0,Math.min(xs.length-1,Math.floor((xs.length-1)*p)));
+    return xs[i];
+  }
+  function summary(key){
+    const vals=runs.map(r=>r[key]);
+    const success=vals.filter(v=>v.reached).map(v=>v.distance).sort((a,b)=>a-b);
+    return{
+      success:success.length,
+      rate:success.length/trials,
+      med:quantile(success,.5),
+      q10:quantile(success,.1),
+      q90:quantile(success,.9)
+    };
+  }
+  const R=summary('random'),M=summary('memory'),A=summary('motor'),S=summary('smart');
+
+  const fmt=v=>Number.isFinite(v)?`${Math.round(v)} m`:'–';
+  const range=x=>Number.isFinite(x.q10)?`${Math.round(x.q10)}–${Math.round(x.q90)} m`:'–';
+  const success=x=>`${x.success}/${trials}`;
+  const pctShorter=(base,x)=>Number.isFinite(base.med)&&Number.isFinite(x.med)?100*(base.med-x.med)/base.med:NaN;
+  const vsRandom=x=>{
+    const g=pctShorter(R,x);
+    if(!Number.isFinite(g))return '–';
+    return g>=0?`${Math.round(g)} % kortare`:`${Math.round(-g)} % längre`;
+  };
+  const motorGain=pctShorter(M,A);
+  const memGain=pctShorter(R,M);
+
+  let takeaway='';
+  if(Number.isFinite(memGain)&&Number.isFinite(motorGain)){
+    const memMeters=R.med-M.med;
+    const motorMeters=M.med-A.med;
+    takeaway=`<strong>Så läser du resultatet:</strong> minnet ändrar typkörningen med ${Math.abs(Math.round(memMeters))} m (${Math.abs(Math.round(memGain))} %) jämfört med ren slump. `;
+    if(motorGain>2){
+      takeaway+=`Klippmotorströmmen sparar sedan ytterligare <strong>${Math.round(motorMeters)} m (${Math.round(motorGain)} %)</strong> jämfört med minne utan motorström.`;
+    }else if(motorGain<-2){
+      takeaway+=`I just denna inställning gör klippmotorströmmen faktiskt modellen <strong>${Math.round(-motorGain)} % sämre</strong> än minne utan motorström.`;
+    }else{
+      takeaway+=`Klippmotorströmmen gör <strong>nästan ingen mätbar skillnad</strong> utöver minnet i just denna inställning.`;
+    }
+  }
+
+  mc.innerHTML=`
+    <p class="mc-summary"><strong>${trials} oberoende försök, mål: 95 % klippt.</strong><br>
+    Siffran “typiskt” är medianen: hälften av körningarna var kortare och hälften längre. Lägre är bättre.</p>
+    <table class="mc-table">
+      <thead><tr><th>Strategi</th><th>Typiskt till 95 %</th><th>Jämfört med slump</th><th>80 % av körningarna</th><th>Nådde 95 %</th></tr></thead>
+      <tbody>
+        <tr><td>1. Ren slump</td><td><strong>${fmt(R.med)}</strong></td><td>referens</td><td>${range(R)}</td><td>${success(R)}</td></tr>
+        <tr><td>2. DR + minne</td><td><strong>${fmt(M.med)}</strong></td><td class="${pctShorter(R,M)>0?'mc-win':''}">${vsRandom(M)}</td><td>${range(M)}</td><td>${success(M)}</td></tr>
+        <tr><td>3. + klippmotor</td><td><strong>${fmt(A.med)}</strong></td><td class="${pctShorter(R,A)>0?'mc-win':''}">${vsRandom(A)}</td><td>${range(A)}</td><td>${success(A)}</td></tr>
+        <tr><td>4. Kartlagd / RTK</td><td><strong>${fmt(S.med)}</strong></td><td class="${pctShorter(R,S)>0?'mc-win':''}">${vsRandom(S)}</td><td>${range(S)}</td><td>${success(S)}</td></tr>
+      </tbody>
+    </table>
+    <p class="mc-summary">${takeaway}</p>
+    <div class="mc-note">“80 % av körningarna” betyder intervallet från 10:e till 90:e percentilen. Om en strategi inte når 95 % inom ${Math.round(maxDist)} m räknas den som misslyckad i kolumnen längst till höger, inte som ett falskt fint resultat. Modell 2 och 3 får samma start och samma DR-profil; deras avsiktliga skillnad är bara klippmotor-signalen.</div>`;
+};
+
 const driftEl=document.getElementById('drift');
 const driftValEl=document.getElementById('driftVal');
 const grassModeEl=document.getElementById('grassMode');
