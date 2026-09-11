@@ -1,0 +1,204 @@
+const stage=document.getElementById('stage');
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x111817);
+scene.fog=new THREE.Fog(0x111817,28,52);
+
+const camera=new THREE.PerspectiveCamera(47,1,.1,150);
+camera.position.set(0,18.5,25);
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.outputColorSpace=THREE.SRGBColorSpace;
+stage.appendChild(renderer.domElement);
+
+const controls=new OrbitControls(camera,renderer.domElement);
+controls.target.set(0,0,0);
+controls.enableDamping=true;
+controls.maxPolarAngle=Math.PI/2.03;
+controls.minDistance=13; controls.maxDistance=42;
+
+scene.add(new THREE.HemisphereLight(0xdff4ff,0x31452f,1.45));
+const sun=new THREE.DirectionalLight(0xfff4df,2.4);
+sun.position.set(-8,18,10); sun.castShadow=true;
+sun.shadow.mapSize.set(2048,2048); sun.shadow.camera.left=-24;sun.shadow.camera.right=24;sun.shadow.camera.top=20;sun.shadow.camera.bottom=-20;
+scene.add(sun);
+
+const floor=new THREE.Mesh(new THREE.PlaneGeometry(52,30),new THREE.MeshStandardMaterial({color:0x242b28,roughness:1}));
+floor.rotation.x=-Math.PI/2;floor.position.y=-.06;floor.receiveShadow=true;scene.add(floor);
+
+const SHAPES={
+  square:[[-6,-6],[6,-6],[6,6],[-6,6]],
+  long:[[-9,-3.2],[9,-3.2],[9,3.2],[-9,3.2]],
+  L:[[-6,-6],[1.2,-6],[1.2,-1.2],[6,-1.2],[6,6],[-6,6]],
+  H:[[-5,8],[-5,2],[-1.15,2],[-1.15,-2],[-5,-2],[-5,-8],[5,-8],[5,-2],[1.15,-2],[1.15,2],[5,2],[5,8]],
+  circle:Array.from({length:96},(_,i)=>{const a=i/96*Math.PI*2;return[6.2*Math.cos(a),6.2*Math.sin(a)]})
+};
+
+const areaPoly=p=>{let a=0;for(let i=0,j=p.length-1;i<p.length;j=i++)a+=p[j][0]*p[i][1]-p[i][0]*p[j][1];return Math.abs(a)/2};
+function bounds(p){const xs=p.map(x=>x[0]),ys=p.map(x=>x[1]);return{minX:Math.min(...xs),maxX:Math.max(...xs),minY:Math.min(...ys),maxY:Math.max(...ys)}}
+function pointInPoly(x,y,p){let inside=false;for(let i=0,j=p.length-1;i<p.length;j=i++){const[xi,yi]=p[i],[xj,yj]=p[j];if(((yi>y)!=(yj>y))&&x<(xj-xi)*(y-yi)/(yj-yi)+xi)inside=!inside}return inside}
+const MOWER_CLEARANCE=.74;
+
+function pointSegmentDistance(px,py,ax,ay,bx,by){
+  const vx=bx-ax,vy=by-ay,wx=px-ax,wy=py-ay;
+  const vv=vx*vx+vy*vy;
+  const t=vv?Math.max(0,Math.min(1,(wx*vx+wy*vy)/vv)):0;
+  const dx=px-(ax+t*vx),dy=py-(ay+t*vy);
+  return Math.hypot(dx,dy);
+}
+function safeAt(x,y,p,r=MOWER_CLEARANCE){
+  if(!pointInPoly(x,y,p))return false;
+  // Exact circular-footprint constraint: the mower centre must remain at
+  // least r metres from every boundary segment. For this simple polygon
+  // that means the whole robot disc is guaranteed to stay on grass.
+  for(let i=0,j=p.length-1;i<p.length;j=i++){
+    if(pointSegmentDistance(x,y,p[j][0],p[j][1],p[i][0],p[i][1])<r)return false;
+  }
+  return true;
+}
+function randomPoint(poly,r=MOWER_CLEARANCE){const b=bounds(poly);for(let i=0;i<8000;i++){const x=b.minX+Math.random()*(b.maxX-b.minX),y=b.minY+Math.random()*(b.maxY-b.minY);if(safeAt(x,y,poly,r))return[x,y]}return[0,0]}
+function scanIntersections(poly,y){const xs=[];for(let i=0,j=poly.length-1;i<p.length;j=i++){const[x1,y1]=poly[j],[x2,y2]=poly[i];if((y1<=y&&y2>y)||(y2<=y&&y1>y))xs.push(x1+(y-y1)*(x2-x1)/(y2-y1))}xs.sort((a,b)=>a-b);const out=[];for(let i=0;i+1<xs.length;i+=2)out.push([xs[i],xs[i+1]]);return out}
+function angDiff(a,b){let d=(b-a+Math.PI)%(2*Math.PI)-Math.PI;if(d<-Math.PI)d+=2*Math.PI;return d}
+function fmtTime(sec){const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),s=Math.floor(sec%60);return h?`${h}h ${String(m).padStart(2,'0')}m`:`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`}
+
+function makeLawnTexture(poly,N=210){
+  const b=bounds(poly),w=b.maxX-b.minX,h=b.maxY-b.minY,H=Math.max(60,Math.round(N*h/w)),W=N;
+  const canvas=document.createElement('canvas');canvas.width=W;canvas.height=H;const ctx=canvas.getContext('2d');
+  const inside=new Uint8Array(W*H),cut=new Uint8Array(W*H);let insideCount=0;
+  for(let iy=0;iy<H;iy++)for(let ix=0;ix<W;ix++){const x=b.minX+(ix+.5)/W*w,y=b.minY+(iy+.5)/H*h,k=iy*W+ix;if(pointInPoly(x,y,poly)){inside[k]=1;insideCount++}}
+  const tex=new THREE.CanvasTexture(canvas);tex.colorSpace=THREE.SRGBColorSpace;tex.magFilter=THREE.LinearFilter;
+  function draw(){
+    const im=ctx.createImageData(W,H),d=im.data;
+    for(let k=0;k<W*H;k++){const q=4*k;if(!inside[k]){d[q+3]=0;continue}
+      const noise=((k*1103515245+12345)>>>16)&7;
+      if(cut[k]){d[q]=91+noise;d[q+1]=151+noise;d[q+2]=73+noise}
+      else{d[q]=37+noise;d[q+1]=103+noise;d[q+2]=47+noise}
+      d[q+3]=255}
+    ctx.putImageData(im,0,0);tex.needsUpdate=true
+  }
+  function sampleUncut(x,y,r){
+    const cx=(x-b.minX)/w*W,cy=(y-b.minY)/h*H,rx=r/w*W,ry=r/h*H;
+    let total=0,uncut=0;
+    for(let iy=Math.max(0,Math.floor(cy-ry));iy<=Math.min(H-1,Math.ceil(cy+ry));iy++)
+      for(let ix=Math.max(0,Math.floor(cx-rx));ix<=Math.min(W-1,Math.ceil(cx+rx));ix++){
+        const dx=(ix+.5-cx)/rx,dy=(iy+.5-cy)/ry,k=iy*W+ix;
+        if(dx*dx+dy*dy<=1&&inside[k]){total++;if(!cut[k])uncut++}
+      }
+    return total?uncut/total:0;
+  }
+  function mark(x,y,r){const cx=(x-b.minX)/w*W,cy=(y-b.minY)/h*H,rx=r/w*W,ry=r/h*H;let add=0;
+    for(let iy=Math.max(0,Math.floor(cy-ry));iy<=Math.min(H-1,Math.ceil(cy+ry));iy++)
+      for(let ix=Math.max(0,Math.floor(cx-rx));ix<=Math.min(W-1,Math.ceil(cx+rx));ix++){const dx=(ix+.5-cx)/rx,dy=(iy+.5-cy)/ry,k=iy*W+ix;if(dx*dx+dy*dy<=1&&inside[k]&&!cut[k]){cut[k]=1;add++}}
+    return add}
+  draw(); return{b,w,h,W,H,inside,cut,insideCount,tex,mark,sampleUncut,draw}
+}
+
+function mat(c,r=.55,m=.08){return new THREE.MeshStandardMaterial({color:c,roughness:r,metalness:m})}
+function mowerMesh(kind){
+  const g=new THREE.Group(), cast=o=>(o.castShadow=o.receiveShadow=true,o);
+  const rubber=mat(0x070808,.98),black=mat(0x15191b,.8),metal=mat(0xaab1b5,.3,.72),glass=mat(0x10242d,.18,.3);
+  function box(x,y,z,ma,px,py,pz){const q=cast(new THREE.Mesh(new THREE.BoxGeometry(x,y,z),ma));q.position.set(px,py,pz);g.add(q);return q}
+  function cyl(r,h,ma,px,py,pz,rx=0,ry=0,rz=0){const q=cast(new THREE.Mesh(new THREE.CylinderGeometry(r,r,h,24),ma));q.position.set(px,py,pz);q.rotation.set(rx,ry,rz);g.add(q);return q}
+  if(kind==='random'||kind==='adaptive'){
+    const body=mat(kind==='adaptive'?0x4d9fc7:0xe59a43,.36,.08),accent=mat(0x353b3e,.6);
+    box(1.2,.17,.8,black,0,.18,0);
+    const shell=cast(new THREE.Mesh(new THREE.SphereGeometry(.62,32,20),body));shell.scale.set(1,.48,.68);shell.position.set(-.02,.43,0);g.add(shell);
+    box(.13,.2,.84,black,.58,.26,0);
+    for(const z of[-.44,.44]){cyl(.19,.13,rubber,-.2,.2,z,Math.PI/2);cyl(.095,.137,metal,-.2,.2,z,Math.PI/2)}
+    cyl(.10,.08,rubber,.4,.12,0,0,0,Math.PI/2);
+    cyl(.32,.035,metal,.02,.085,0);box(.52,.025,.05,metal,.02,.065,0);
+    cyl(.07,.035,accent,.05,.72,0); // stop button base
+    cyl(.045,.045,mat(0xd73b34,.35),.05,.75,0);
+    box(.24,.035,.13,glass,-.18,.695,0);
+    // bumper sensor whiskers
+    box(.035,.035,.23,metal,.655,.34,-.31);box(.035,.035,.23,metal,.655,.34,.31);
+    if(kind==='adaptive'){cyl(.07,.035,mat(0x76d5ff,.22,.2),-.24,.74,0);box(.15,.018,.06,mat(0xc7efff,.18),-.24,.765,0)}
+  }else{
+    const green=mat(0x5bbb70,.3,.14),dark=mat(0x20272a,.55,.12),lime=mat(0xa7db62,.3);
+    box(1.18,.18,.82,dark,0,.19,0);
+    // angular wedge shell
+    const shell=cast(new THREE.Mesh(new THREE.CapsuleGeometry(.38,.46,6,18),green));shell.rotation.z=Math.PI/2;shell.scale.set(1.12,.72,1.0);shell.position.set(-.03,.43,0);g.add(shell);
+    box(.32,.16,.68,dark,.38,.49,0);
+    for(const z of[-.47,.47]){
+      cyl(.235,.15,rubber,-.28,.24,z,Math.PI/2);
+      cyl(.11,.156,metal,-.28,.24,z,Math.PI/2);
+      // visual tread blocks
+      for(let i=0;i<8;i++){const a=i/8*Math.PI*2;const t=box(.055,.035,.17,black,-.28+.23*Math.cos(a),.24+.23*Math.sin(a),z);t.rotation.z=a}
+    }
+    for(const z of[-.30,.30])cyl(.095,.06,rubber,.43,.11,z,Math.PI/2);
+    cyl(.33,.035,metal,.04,.083,0);box(.56,.022,.052,metal,.04,.062,0);
+    // front stereo camera bar
+    box(.12,.14,.44,dark,.48,.67,0);
+    for(const z of[-.12,.12]){cyl(.05,.045,glass,.548,.68,z,0,0,Math.PI/2);cyl(.017,.048,mat(0x79b9d2,.15,.35),.575,.68,z,0,0,Math.PI/2)}
+    // RTK/GNSS puck + mast
+    cyl(.025,.30,metal,-.13,.78,0);
+    cyl(.115,.065,glass,-.13,.95,0);
+    cyl(.075,.018,lime,-.13,.997,0);
+    // headlights
+    for(const z of[-.27,.27])box(.035,.07,.11,mat(0xf4e9bc,.2),.575,.43,z);
+    box(.04,.07,.38,mat(0xc93832,.35),-.58,.43,0);
+  }
+  // direction arrow
+  const arrow=cast(new THREE.Mesh(new THREE.ConeGeometry(.065,.22,16),mat(0xf1f1ed,.45)));arrow.rotation.z=-Math.PI/2;arrow.position.set(.25,.79,0);g.add(arrow);
+  g.scale.setScalar(1.05);return g
+}
+function makeDock(){const g=new THREE.Group();const dark=mat(0x282d2e,.7),metal=mat(0x999f9f,.35,.55);
+  const base=new THREE.Mesh(new THREE.BoxGeometry(1.25,.07,.85),dark);base.position.y=.035;base.castShadow=true;g.add(base);
+  const post=new THREE.Mesh(new THREE.BoxGeometry(.12,.7,.65),dark);post.position.set(-.5,.38,0);post.castShadow=true;g.add(post);
+  const roof=new THREE.Mesh(new THREE.BoxGeometry(.78,.07,.86),dark);roof.position.set(-.14,.72,0);roof.castShadow=true;g.add(roof);
+  for(const z of[-.18,.18]){const c=new THREE.Mesh(new THREE.BoxGeometry(.03,.12,.08),metal);c.position.set(.48,.12,z);g.add(c)}
+  return g
+}
+function dockPoint(poly){
+  const b=bounds(poly),m=MOWER_CLEARANCE+.14;
+  const tries=[[b.minX+m,0],[b.minX+m,b.minY+m],[0,b.minY+m],[b.maxX-m,0]];
+  for(const p of tries)if(safeAt(p[0],p[1],poly,MOWER_CLEARANCE))return p;
+  return randomPoint(poly,MOWER_CLEARANCE)
+}
+
+function straightInside(a,b,poly,r=MOWER_CLEARANCE){
+  const d=Math.hypot(b[0]-a[0],b[1]-a[1]);
+  const n=Math.max(1,Math.ceil(d/.055));
+  for(let i=0;i<=n;i++){
+    const t=i/n,x=a[0]*(1-t)+b[0]*t,y=a[1]*(1-t)+b[1]*t;
+    if(!safeAt(x,y,poly,r))return false;
+  }
+  return true;
+}
+
+function bfsPath(start,goal,poly,step=.28,r=MOWER_CLEARANCE){
+  if(!safeAt(start[0],start[1],poly,r) || !safeAt(goal[0],goal[1],poly,r))return null;
+  if(straightInside(start,goal,poly,r))return[goal];
+
+  const b=bounds(poly);
+  const nx=Math.ceil((b.maxX-b.minX)/step)+1,ny=Math.ceil((b.maxY-b.minY)/step)+1;
+  const id=(x,y)=>y*nx+x,coord=i=>[i%nx,Math.floor(i/nx)];
+  const world=(x,y)=>[b.minX+x*step,b.minY+y*step];
+  const cell=p=>[
+    Math.max(0,Math.min(nx-1,Math.round((p[0]-b.minX)/step))),
+    Math.max(0,Math.min(ny-1,Math.round((p[1]-b.minY)/step)))
+  ];
+
+  // Find a nearby safe grid node for start/goal instead of ever allowing
+  // an unsafe direct fallback.
+  function nearestSafe(c,p){
+    let best=null,bestD=Infinity;
+    for(let rad=0;rad<=5 && !best;rad++){
+      for(let yy=c[1]-rad;yy<=c[1]+rad;yy++)for(let xx=c[0]-rad;xx<=c[0]+rad;xx++){
+        if(xx<0||yy<0||xx>=nx||yy>=ny)continue;
+        const q=world(xx,yy);
+        if(!safeAt(q[0],q[1],poly,r))continue;
+        if(!straightInside(p,q,poly,r))continue;
+        const d=Math.hypot(q[0]-p[0],q[1]-p[1]);
+        if(d<bestD){best=[xx,yy];bestD=d}
+      }
+    }
+    return best;
+  }
+
+  const sc=nearestSafe(cell(start),start),tc=nearestSafe(cell(goal),goal);
+  if(!sc||!tc)return null;
+
+  const q=[id(...sc)],prev=new Int32Array(nx*ny);prev.fill(-2);prev[q[0]]=-1;
+  let qi=0,endId=-1;
